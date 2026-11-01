@@ -167,9 +167,10 @@ const T = {
     up: "오른다!!", down: "내린다!!", flat: "옆으로 기어간다",
     target: "목표가", conf: "확신도",
     noRes: "검색 결과가 없어요. 다른 이름이나 티커로 찾아보세요.",
+    direct: (q) => `${q} 차트 직접 불러오기`, directSub: "목록에 없는 종목 코드(6자리)나 미국 티커", notFound: "그 코드로는 차트를 찾지 못했어요",
     loading: "차트 불러오는 중…", loadErr: "차트 데이터를 불러오지 못했어요. 새로고침해 주세요.",
     future: "미래 (아직 안 그려짐)", futureShort: "미래",
-    asof: (d, live) => live ? `일봉 · 바이낸스 실시간 · ${d}` : `일봉 · 마지막 거래일 ${d}`,
+    asof: (d, live) => live ? `일봉 · 실시간 · ${d}` : `일봉 · 마지막 거래일 ${d}`,
     disc1: "재미로 보는 낙서입니다.", disc2: "투자 조언이 아니고, 맞아야 할 이유도 전혀 없습니다.",
     src: (d) => `데이터: 국내·미국 주식은 네이버 금융, 코인은 바이낸스(USDT). 주식 데이터는 매일 자동 갱신되며 현재 ${d} 기준입니다.`,
     copied: "링크를 복사했어요", copyFail: "주소창의 링크를 복사해 주세요", saved: "이미지를 저장했어요",
@@ -204,9 +205,10 @@ const T = {
     up: "GOING UP!!", down: "GOING DOWN!!", flat: "CRAWLING SIDEWAYS",
     target: "Target", conf: "Confidence",
     noRes: "No matches. Try another name or ticker.",
+    direct: (q) => `Load ${q} directly`, directSub: "A 6-digit Korean code or a US ticker not in the list", notFound: "No chart found for that code",
     loading: "Loading charts…", loadErr: "Couldn't load chart data. Please refresh.",
     future: "THE FUTURE (not drawn yet)", futureShort: "FUTURE",
-    asof: (d, live) => live ? `Daily · live from Binance · ${d}` : `Daily · last session ${d}`,
+    asof: (d, live) => live ? `Daily · live · ${d}` : `Daily · last session ${d}`,
     disc1: "This is a doodle, for fun.", disc2: "Not investment advice, and there is no reason it should ever be right.",
     src: (d) => `Data: Korean and US stocks from Naver Finance, crypto from Binance (USDT). Stock data refreshes daily; current as of ${d}.`,
     copied: "Link copied", copyFail: "Copy the link from the address bar", saved: "Image saved",
@@ -231,6 +233,9 @@ const T = {
     },
   },
 };
+/* Set this to your Supabase function URL to load stock charts live, e.g.
+   "https://<project-ref>.supabase.co/functions/v1/chart". Empty = use data.json only. */
+const LIVE_API = "https://tnsxhhdmnbhgzqgwosto.supabase.co/functions/v1/chart-doodle";
 const POPULAR = ["kr-005930", "c-BTC", "us-NVDA", "us-TSLA", "kr-000660", "c-DOGE", "kr-KOSPI", "c-XRP", "us-GME"];
 const CHAR_IDS = ["cat", "camel", "whale", "shark", "dino", "snail", "rabbit", "snake", "ghost"];
 
@@ -322,12 +327,17 @@ function showResults(open) {
     }).filter((x) => x[0] >= 0).sort((a, b) => b[0] - a[0]).map((x) => x[1]);
   }
   shown = list.slice(0, 40); sel = 0;
+  const raw = $("q").value.trim().toUpperCase();
+  if (LIVE_API && (/^\d{6}$/.test(raw) || /^[A-Z]{1,5}$/.test(raw)) && !ITEMS.some((it) => it.sym === raw) && tab !== "coin") {
+    const kr = /^\d{6}$/.test(raw);
+    shown.push({ id: (kr ? "kr-" : "us-") + raw, sym: raw, ko: raw, en: raw, cat: kr ? "kr" : "us", cur: kr ? "KRW" : "USD", d: null, direct: true });
+  }
   box.innerHTML = "";
   if (!shown.length) { const d = document.createElement("div"); d.className = "res empty"; d.textContent = T[LANG].noRes; box.appendChild(d); }
   shown.forEach((it, i) => {
     const d = document.createElement("div"); d.className = "res"; d.setAttribute("role", "option"); d.setAttribute("aria-selected", i === sel);
-    const b = document.createElement("b"); b.textContent = name(it);
-    const s = document.createElement("small"); s.textContent = `${LANG === "ko" ? it.en : it.ko} · ${it.sym}`;
+    const b = document.createElement("b"); b.textContent = it.direct ? T[LANG].direct(it.sym) : name(it);
+    const s = document.createElement("small"); s.textContent = it.direct ? T[LANG].directSub : `${LANG === "ko" ? it.en : it.ko} · ${it.sym}`;
     const g = document.createElement("span"); g.className = "badge"; g.textContent = T[LANG].cat[it.cat];
     d.append(b, g, s);
     d.onmousedown = (e) => { e.preventDefault(); select(it); };
@@ -351,22 +361,38 @@ $("q").addEventListener("keydown", (e) => {
   else if (e.key === "Escape") { $("results").hidden = true; $("q").blur(); }
 });
 
-function select(it) {
+async function select(it) {
+  if (!it.d) {
+    $("results").hidden = true;
+    await refreshLive(it);
+    if (!it.d) { toast(T[LANG].notFound); return; }
+    if (!BYID[it.id]) { ITEMS.push(it); BYID[it.id] = it; }
+  }
   cur = it; reroll = 0; forced = null;
   $("q").value = ""; $("results").hidden = true;
   try { history.replaceState(null, "", "#" + it.id); } catch (e) {}
   header(); draw(true);
-  if (it.cat === "coin" && !live[it.id]) refreshCoin(it);
+  if (!live[it.id]) refreshLive(it);
   window.scrollTo({ top: $("card").offsetTop - 10, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
 }
-async function refreshCoin(it) {
+async function refreshLive(it) {
   try {
-    const base = it.sym.replace("/USDT", "");
-    const r = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${base}USDT&interval=1d&limit=260`);
-    if (!r.ok) return;
-    const js = await r.json();
-    if (!Array.isArray(js) || js.length < 60) return;
-    it.d = js.map((k) => { const t = new Date(k[0]); const d = t.getUTCFullYear() * 10000 + (t.getUTCMonth() + 1) * 100 + t.getUTCDate(); return [d, +k[1], +k[2], +k[3], +k[4]]; });
+    let rows = null;
+    if (it.cat === "coin") {
+      const base = it.sym.replace("/USDT", "");
+      const r = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${base}USDT&interval=1d&limit=260`);
+      if (!r.ok) return;
+      const js = await r.json();
+      if (Array.isArray(js)) rows = js.map((k) => { const t = new Date(k[0]); const d = t.getUTCFullYear() * 10000 + (t.getUTCMonth() + 1) * 100 + t.getUTCDate(); return [d, +k[1], +k[2], +k[3], +k[4]]; });
+    } else if (LIVE_API) {
+      const r = await fetch(`${LIVE_API}?id=${encodeURIComponent(it.id)}`);
+      if (!r.ok) return;
+      const js = await r.json();
+      rows = js && js.d;
+      if (js && js.name && it.ko === it.sym) { it.ko = js.name; it.en = js.name; }
+    }
+    if (!Array.isArray(rows) || rows.length < 60) return;
+    it.d = rows;
     live[it.id] = true;
     if (cur === it) { header(); draw(false); }
   } catch (e) { /* keep snapshot */ }
@@ -883,7 +909,11 @@ $("lang-ko").onclick = () => { LANG = "ko"; try { localStorage.setItem("cdo-lang
 $("lang-en").onclick = () => { LANG = "en"; try { localStorage.setItem("cdo-lang", LANG); } catch (e) {} applyLang(); };
 let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => draw(false), 150); });
 matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { if (cur) { header(); draw(false); } });
-window.addEventListener("hashchange", () => { const it = BYID[location.hash.slice(1)]; if (it && it !== cur) select(it); });
+function directItem(id) {
+  const m = id.match(/^(kr|us)-([0-9]{6}|[A-Z]{1,5})$/); if (!m || !LIVE_API) return null;
+  return { id, sym: m[2], ko: m[2], en: m[2], cat: m[1], cur: m[1] === "kr" ? "KRW" : "USD", d: null };
+}
+window.addEventListener("hashchange", () => { const h = location.hash.slice(1); const it = BYID[h] || directItem(h); if (it && it !== cur) select(it); });
 
 /* ---------- boot ---------- */
 applyLang();
@@ -894,10 +924,11 @@ Promise.all([
   ITEMS = data.items; ASOF = data.asof; for (const it of ITEMS) BYID[it.id] = it;
   $("loading").hidden = true; $("main").hidden = false;
   applyLang();
-  const fromHash = BYID[location.hash.slice(1)];
+  const h = location.hash.slice(1), fromHash = BYID[h];
   cur = fromHash || BYID[LANG === "ko" ? "kr-005930" : "c-BTC"] || ITEMS[0];
   header(); draw(true);
-  if (cur.cat === "coin") refreshCoin(cur);
+  refreshLive(cur);
+  if (!fromHash && directItem(h)) select(directItem(h));
 }).catch(() => { $("loading").textContent = T[LANG].loadErr; });
 })();
 </script>

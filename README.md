@@ -17,11 +17,17 @@ Pick a stock or coin and the site scribbles a character on the chart, then "pred
 
 ## 데이터
 
-- 국내·미국 주식, 지수: 네이버 금융 일봉
-- 코인: 바이낸스 USDT 일봉 (페이지에서 바이낸스 공개 API로 최신값을 다시 불러옴)
-- `data.json`은 GitHub Actions(`.github/workflows/refresh-data.yml`)가 매일 두 번 `fetch_data.py`로 갱신
+- 국내·미국 주식, 지수: Supabase Edge Function(`supabase/functions/chart-doodle`)이 네이버 금융 일봉을 실시간으로 받아 전달 (60초 캐시). 목록에 없는 6자리 종목코드나 미국 티커도 검색창에 치면 바로 불러옴
+- 코인: 바이낸스 USDT 일봉을 브라우저에서 바로 불러옴
+- `data.json`은 첫 화면용 스냅샷이자 함수가 실패할 때의 대체 데이터. GitHub Actions(`.github/workflows/refresh-data.yml`)가 매일 두 번 갱신
 
-종목 추가는 `fetch_data.py`의 `KR`, `US`, `COINS` 목록에 넣으면 됩니다.
+함수 주소는 `index.html`의 `LIVE_API`에 있습니다. 함수 재배포:
+
+```powershell
+supabase functions deploy chart-doodle --no-verify-jwt
+```
+
+검색 목록에 종목을 추가하려면 `fetch_data.py`의 `KR`, `US`, `COINS` 목록에 넣으면 됩니다.
 
 ## 로컬 실행 (Windows PowerShell)
 
