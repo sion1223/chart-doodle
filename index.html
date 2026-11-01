@@ -157,6 +157,7 @@ canvas.dim{opacity:.45;transition:opacity .2s}
 </div>
 <div class="toast" id="toast" role="status"></div>
 
+<script src="looks.js"></script>
 <script>
 (() => {
 "use strict";
@@ -346,8 +347,9 @@ function addGeneric(def) {
     score: (A) => 0.45 + (pref(A) ? 0.95 : 0),
     build(A, pen) {
       const U = A.U, pts = [A.L, ...ar.c.map(([fx, du]) => A.F(fx, du))];
-      pen.curve(pts, { w: 4, main: true, dash: def.arche === "flat" ? [8, 7] : null });
       const tgt = pts[Math.min(ar.t, pts.length - 1)];
+      drawLook(pen, A, def, pts, tgt);
+      pen.curve(pts, { w: 4, main: true, dash: def.arche === "flat" ? [8, 7] : null });
       const ko = LANG === "ko";
       const right = tgt.x > A.fx0 + 0.55 * A.fw;
       const ty = tgt.y < A.L.y ? tgt.y - 1.3 * U : tgt.y + 1.4 * U;
@@ -357,6 +359,40 @@ function addGeneric(def) {
       return { target: tgt, reason: "g:" + def.id };
     },
   };
+}
+// Draws a character's body from looks.js, placed against the chart and the forecast path.
+function stamp(pen, cmds, C, R, f) {
+  const P = (x, y) => ({ x: C.x + f * x * R, y: C.y + y * R });
+  const pairs = (c) => { const out = []; for (let i = 1; i + 1 < c.length; i += 2) out.push(P(c[i], c[i + 1])); return out; };
+  for (const c of cmds) {
+    const k = c[0];
+    if (k === "e" || k === "c") { const p = P(c[1], c[2]); pen.ell(p.x, p.y, (k === "e" ? c[3] : c[3]) * R, (k === "e" ? c[4] : c[3]) * R, { w: 3 }); }
+    else if (k === "d") { const p = P(c[1], c[2]); pen.dot(p.x, p.y, 3.4); }
+    else if (k === "l") pen.line(pairs(c), { w: 3 });
+    else if (k === "q") pen.curve(pairs(c), { w: 3 });
+    else if (k === "a") {
+      const pts = [], a0 = c[4] * Math.PI / 180, a1 = c[5] * Math.PI / 180;
+      for (let i = 0; i <= 24; i++) { const a = a0 + (a1 - a0) * i / 24; pts.push(P(c[1] + Math.cos(a) * c[3], c[2] + Math.sin(a) * c[3])); }
+      pen.line(pts, { w: 3 });
+    } else if (k === "s") {
+      const pts = []; for (let t = 0; t <= Math.PI * 4.5; t += 0.2) { const r = c[3] * (1 - t / (Math.PI * 5)); pts.push(P(c[1] + Math.cos(t) * r, c[2] + Math.sin(t) * r)); }
+      pen.line(pts, { w: 3 });
+    }
+  }
+}
+function drawLook(pen, A, def, pts, tgt) {
+  const lk = def.look, lib = window.DOODLE_LOOKS;
+  if (!lk || !lib || !lib.T[lk.t]) return;
+  const R = A.U * 0.95 * (lk.s || 1), f = lk.flip ? -1 : 1, L = A.L;
+  let C;
+  if (lk.at === "attach") { const h = lk.hook || [0, 0]; C = { x: L.x - f * h[0] * R, y: L.y - h[1] * R }; }
+  else if (lk.at === "ride") C = { x: tgt.x, y: tgt.y };
+  else if (lk.at === "span") C = { x: (L.x + tgt.x) / 2, y: Math.max(L.y, tgt.y) + 1.0 * R };
+  else { const n = pts.length; C = { x: pts.reduce((a, p) => a + p.x, 0) / n, y: pts.reduce((a, p) => a + p.y, 0) / n + 1.1 * R }; }
+  C.x = clamp(C.x, A.box.left + 1.8 * R, A.box.right - 1.2 * R);
+  C.y = clamp(C.y, A.box.top + 1.3 * R, A.box.bottom - 1.2 * R);
+  stamp(pen, lib.T[lk.t](lk.o || {}), C, R, f);
+  if (lk.cap && lib.CAPS[lk.cap]) stamp(pen, lib.CAPS[lk.cap], tgt, R, 1);
 }
 function reasonText(r, t) {
   const L = T[LANG];
@@ -549,13 +585,13 @@ function makePen(rng, s) {
   const items = [];
   return {
     items,
-    line(P, o = {}) { if (P.length > 1) items.push({ k: "l", P, w: (o.w || 3.2) * s, dash: o.dash || null, main: !!o.main }); },
+    line(P, o = {}) { if (P.length > 1) items.push({ k: "l", P, w: (o.w || 3.2) * s, dash: o.dash || null, main: !!o.main, label: !!o.label }); },
     curve(P, o) { this.line(catmull(P), o); },
     ell(cx, cy, rx, ry, o, a0, a1) { this.line(ellipsePts(cx, cy, rx, ry, rng, a0, a1), o); },
     dot(x, y, r = 3) { items.push({ k: "d", x, y, r: r * s }); },
-    arrowHead(from, to, size, main = false) {
+    arrowHead(from, to, size, main = false, label = false) {
       const a = Math.atan2(to.y - from.y, to.x - from.x), L = size * s;
-      this.line([{ x: to.x - L * Math.cos(a - 0.5), y: to.y - L * Math.sin(a - 0.5) }, to, { x: to.x - L * Math.cos(a + 0.5), y: to.y - L * Math.sin(a + 0.5) }], { w: 3.6, main });
+      this.line([{ x: to.x - L * Math.cos(a - 0.5), y: to.y - L * Math.sin(a - 0.5) }, to, { x: to.x - L * Math.cos(a + 0.5), y: to.y - L * Math.sin(a + 0.5) }], { w: 3.6, main, label });
     },
     text(x, y, str, o = {}) { items.push({ k: "t", x, y, str, size: (o.size || 19) * s, rot: o.rot ?? (rng() - 0.5) * 0.12, align: o.align || "center", hl: !!o.hl, main: !!o.main }); },
     pointer(x, y, tx, ty, str) { // label with a scribbly arrow to (tx,ty)
@@ -564,7 +600,7 @@ function makePen(rng, s) {
       const ex = tx - (tx - x) * 0.12, ey = ty - (ty - y) * 0.12;
       const mx = (fx + ex) / 2 + (rng() - 0.5) * 12 * s, my = (fy + ey) / 2 + (rng() - 0.5) * 12 * s;
       const P = catmull([{ x: fx, y: fy }, { x: mx, y: my }, { x: ex, y: ey }], 8);
-      this.line(P, { w: 2.2 }); this.arrowHead(P[P.length - 3], P[P.length - 1], 9);
+      this.line(P, { w: 2.2, label: true }); this.arrowHead(P[P.length - 3], P[P.length - 1], 9, false, true);
     },
   };
 }
@@ -961,9 +997,9 @@ function draw(animate) {
   const key = `${cur.id}|${tf}|${pick}|${rows[rows.length - 1][0]}|${rows.length}`;
   if (ai.key !== key) {
     ai.key = key; ai.img = null; ai.layer = null;
-    const norm = sketchPts(A, box, path), [aspect, ratio] = pickAspect(box);
-    ai.norm = norm; ai.shift = null; ai.aspect = aspect;
-    if (AI_ON && ART_API) requestArt(key, shapeSig(A, box, path), () => lineImage(norm, ratio), pick, dir, aspect);
+    const [aspect, ratio] = pickAspect(box), strokes = sketchStrokes(A, box, prep);
+    ai.aspect = aspect;
+    if (AI_ON && ART_API) requestArt(key, shapeSig(A, box, path), () => lineImage(strokes, ratio), pick, dir, aspect);
     else setAi("");
   }
   const frame = (upto) => {
@@ -971,7 +1007,7 @@ function draw(animate) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const lay = AI_ON && ai.key === key ? aiLayer() : null;
     if (lay) {
-      const W = box.right - box.left, H = box.bottom - box.top, sh = ai.shift || { x: 0, y: 0 };
+      const W = box.right - box.left, H = box.bottom - box.top, sh = { x: 0, y: 0 };
       ctx.save(); ctx.beginPath(); ctx.rect(box.left, box.top - 8, box.right - box.left + 6, H + 16); ctx.clip();
       ctx.drawImage(lay, box.left + sh.x * W, box.top + sh.y * H, W, H); ctx.restore();
     }
@@ -1017,37 +1053,42 @@ function pickAspect(box) {
   const r = (box.right - box.left) / (box.bottom - box.top);
   return ASPECTS.reduce((b, a) => (Math.abs(Math.log(a[1] / r)) < Math.abs(Math.log(b[1] / r)) ? a : b));
 }
-function sketchPts(A, box, path) { // chart + forecast line, normalized to 0..1 of the chart area
-  const W = box.right - box.left, H = box.bottom - box.top;
-  return A.pts.concat(path.slice(1)).map((p) => ({ x: (p.x - box.left) / W, y: (p.y - box.top) / H }));
+function sketchStrokes(A, box, prep) {
+  const W = box.right - box.left, H = box.bottom - box.top, n = (p) => ({ x: (p.x - box.left) / W, y: (p.y - box.top) / H });
+  const out = [{ pts: A.pts.map(n), w: 9 / 1344 }];
+  for (const st of prep.strokes) {
+    if (st.label || st.k === "t") continue;
+    if (st.k === "d") { out.push({ dot: n(st), r: st.r / W }); continue; }
+    if (st.main && st.P.length <= 3) continue; // the forecast arrowhead
+    out.push({ pts: st.a.map(n), w: Math.max(st.w / W, 6 / 1344), dash: st.dash ? st.dash.map((d) => d / W) : null });
+  }
+  return out;
 }
-function lineImage(norm, ratio) {
+function lineImage(strokes, ratio) {
   const W = 1344, H = Math.round(W / ratio), c = document.createElement("canvas"); c.width = W; c.height = H;
   const g = c.getContext("2d");
   g.fillStyle = "#fff"; g.fillRect(0, 0, W, H);
-  g.strokeStyle = "#000"; g.lineWidth = 9; g.lineJoin = "round"; g.lineCap = "round"; g.beginPath();
-  norm.forEach((p, i) => (i ? g.lineTo(p.x * W, p.y * H) : g.moveTo(p.x * W, p.y * H)));
-  g.stroke();
+  g.strokeStyle = "#000"; g.fillStyle = "#000"; g.lineJoin = "round"; g.lineCap = "round";
+  for (const st of strokes) {
+    if (st.dot) { g.beginPath(); g.arc(st.dot.x * W, st.dot.y * H, Math.max(4, st.r * W), 0, Math.PI * 2); g.fill(); continue; }
+    g.lineWidth = Math.max(6, st.w * W); g.setLineDash(st.dash ? st.dash.map((d) => d * W) : []); g.beginPath();
+    st.pts.forEach((p, i) => (i ? g.lineTo(p.x * W, p.y * H) : g.moveTo(p.x * W, p.y * H)));
+    g.stroke();
+  }
   return c.toDataURL("image/png");
 }
-// Finds the small shift that puts the drawing's copy of the chart line back on top of the real one.
-function registerShift(layer, norm) {
-  const gw = 240, gh = Math.max(40, Math.round(gw * layer.height / layer.width));
-  const a = document.createElement("canvas"); a.width = gw; a.height = gh;
-  const ag = a.getContext("2d"); ag.drawImage(layer, 0, 0, gw, gh);
-  const al = ag.getImageData(0, 0, gw, gh).data;
-  const ink = new Uint8Array(gw * gh); for (let i = 0; i < ink.length; i++) ink[i] = al[i * 4 + 3] > 110 ? 1 : 0;
-  const line = []; // pixels of the real line
-  for (let i = 1; i < norm.length; i++) {
-    const p = norm[i - 1], q = norm[i], steps = Math.max(1, Math.ceil(Math.hypot((q.x - p.x) * gw, (q.y - p.y) * gh)));
-    for (let k = 0; k < steps; k++) { const x = Math.round((p.x + (q.x - p.x) * k / steps) * gw), y = Math.round((p.y + (q.y - p.y) * k / steps) * gh); if (x >= 0 && y >= 0 && x < gw && y < gh) line.push(y * gw + x); }
-  }
-  if (!line.length) return { x: 0, y: 0 };
-  const score = (dx, dy) => { let n = 0; for (const i of line) { const x = (i % gw) - dx, y = ((i / gw) | 0) - dy; if (x >= 0 && y >= 0 && x < gw && y < gh && ink[y * gw + x]) n++; } return n; };
-  const base = score(0, 0); let best = { dx: 0, dy: 0, s: base };
-  const R = Math.round(gw * 0.06);
-  for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) { const v = score(dx, dy); if (v > best.s) best = { dx, dy, s: v }; }
-  return best.s > base * 1.15 ? { x: -best.dx / gw, y: -best.dy / gh } : { x: 0, y: 0 };
+// Makes the AI drawing shakier: wavy strip offsets in both directions plus a faint second pass, like the crayon doodle.
+function wobble(src, seed) {
+  const W = src.width, H = src.height, r = rngOf(seed), amp = W / 280;
+  const a = document.createElement("canvas"); a.width = W; a.height = H; const ag = a.getContext("2d");
+  const f1 = 0.02 + r() * 0.012, f2 = 0.06 + r() * 0.03, p1 = r() * 6, p2 = r() * 6;
+  for (let y = 0; y < H; y += 3) ag.drawImage(src, 0, y, W, 3, Math.sin(y * f1 + p1) * amp + Math.sin(y * f2 + p2) * amp * 0.6, y, W, 3);
+  const b = document.createElement("canvas"); b.width = W; b.height = H; const bg = b.getContext("2d");
+  const f3 = 0.02 + r() * 0.012, f4 = 0.06 + r() * 0.03, p3 = r() * 6, p4 = r() * 6;
+  for (let x = 0; x < W; x += 3) bg.drawImage(a, x, 0, 3, H, x, Math.sin(x * f3 + p3) * amp + Math.sin(x * f4 + p4) * amp * 0.6, 3, H);
+  const c = document.createElement("canvas"); c.width = W; c.height = H; const cg = c.getContext("2d");
+  cg.drawImage(b, 0, 0); cg.globalAlpha = 0.45; cg.drawImage(b, amp * 0.7, amp * 0.5);
+  return c;
 }
 const isDark = () => document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
 function aiLayer() {
@@ -1067,9 +1108,8 @@ function aiLayer() {
     }
     g.putImageData(d, 0, 0);
   } catch (e) { return null; }
-  ai.layer = c; ai.dark = dark;
-  if (!ai.shift && ai.norm) ai.shift = registerShift(c, ai.norm);
-  return c;
+  ai.layer = wobble(c, hash(ai.key || "")); ai.dark = dark;
+  return ai.layer;
 }
 function loadImg(url) {
   return new Promise((res, rej) => { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => res(im); im.onerror = rej; im.src = url; });
@@ -1089,7 +1129,7 @@ async function requestArt(key, sig, lineFn, pick, dir, aspect) {
     }
     const im = await loadImg(js.url);
     if (ai.key !== key) return;
-    ai.img = im; ai.layer = null; ai.shift = null;
+    ai.img = im; ai.layer = null;
     setAi("");
     if (!animating && currentFrame) currentFrame(Infinity);
   } catch (e) { if (ai.key === key) setAi(""); }

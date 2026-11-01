@@ -26,7 +26,7 @@ const GLOBAL_LIMIT = +(Deno.env.get("DOODLE_GLOBAL_DAILY_LIMIT") ?? 150);
 // Reuse when the root-mean-square gap between shapes is under this (fraction of chart height).
 const MATCH_RMS = +(Deno.env.get("DOODLE_MATCH_RMS") ?? 0.09);
 
-// Character list shared with the page (keep this copy identical to /characters.json in the repo root).
+// Character list shared with the page: same as /characters.json in the repo root, minus the "look" drawing data.
 import CHARS from "./characters.json" with { type: "json" };
 const SUBJECT: Record<string, [string, string]> = {};
 for (const [id, c] of Object.entries(CHARS.custom as Record<string, { subject: string; layout: string }>)) SUBJECT[id] = [c.subject, c.layout];
@@ -83,12 +83,15 @@ Deno.serve(async (req) => {
   if (!ok) return json({ error: "Daily drawing limit reached.", limited: true }, 429);
 
   const [subject, layout] = SUBJECT[char];
-  // The sketch has the same aspect ratio as the chart area, so the curve must come back exactly where it was.
+  // The sketch is the page's own doodle (chart line + character strokes) at the chart area's aspect ratio,
+  // and the result is laid over the chart without moving it, so every sketch line must stay where it is.
   const prompt =
-    `The input image is a thick black line (a stock price chart) on a white background. Turn it into a crude, funny doodle of ${subject}: ${layout}. ` +
-    `The black line must stay exactly where it is, pixel for pixel: do not move, redraw, smooth, thicken or resize it. ` +
-    `Add only the missing strokes, connected directly to the line so the line and your strokes read as one continuous drawing. ` +
-    `Black ink lines only: no color, no fill, no gray, no shading, no background, no text, no frame. Plain white background. Thick marker strokes, childish MS Paint style.`;
+    `The input image is a rough black doodle drawn on top of a stock price chart line (the long wiggly line from the left edge). ` +
+    `It is meant to be ${subject}: ${layout}. ` +
+    `Every black line in the image must stay exactly where it is, pixel for pixel: do not move, erase, redraw, smooth or resize any of them. ` +
+    `Finish the doodle by adding only what is missing (for example eyes, mouth, legs or missing outline pieces), attached directly to the existing lines so it reads as one continuous drawing. ` +
+    `Black ink lines only: no color, no fill, no gray, no shading, no background, no text, no frame. Plain white background. ` +
+    `Draw it badly on purpose, like someone scribbling with a mouse in MS Paint: shaky, wobbly, uneven strokes that overshoot, wiggle and don't close neatly, lopsided proportions, nothing smooth or symmetrical.`;
 
   let r: Response;
   try {
