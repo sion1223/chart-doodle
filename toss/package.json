@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "python ../toss/make-engine.py && vite build && ait build",
+    "build": "python make-engine.py && vite build && ait build",
     "build:web": "vite build",
     "deploy": "ait deploy"
   },
