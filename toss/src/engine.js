@@ -1,0 +1,848 @@
+// Chart drawing engine for the Apps in Toss build.
+// Generated from ../index.html (the web version) by toss/make-engine.py — edit the web version, then regenerate.
+/* eslint-disable */
+let LANG = "ko";
+let cv = null, ctx = null;
+let ITEMS = [], BYID = {};
+let cur = null, tf = "d", reroll = 0, forced = null;
+let AI_ON = true;
+const TFS = ["d", "w", "m", "h", "y"];
+const TF_BASE = { d: "d", w: "w", m: "m", h: "m", y: "m" };
+const TF_SHOW = { d: 120, w: 104, m: 120, h: 60, y: 60 };
+const ai = { key: null, img: null, layer: null, dark: null, state: "", sim: 0 };
+let animating = false, currentFrame = null;
+let lastPick = null, lastRank = [], animId = 0;
+// Toss light palette (TDS grey/red/blue) for canvas drawing
+const COLORS = {
+  "--panel": "#FFFFFF", "--fg": "#191F28", "--muted": "#8B95A1", "--line": "#F2F4F6", "--future": "rgba(49,130,246,0.06)",
+  "--ink": "#6A2BE8", "--hl": "rgba(255,222,64,.55)", "--up-ko": "#F04452", "--down-ko": "#3182F6", "--up-en": "#F04452", "--down-en": "#3182F6",
+  "--font-doodle": "Gaegu, 'Comic Sans MS', cursive", "--font-num": "'Toss Product Sans', ui-monospace, monospace", "--font-ui": "'Toss Product Sans', system-ui, sans-serif",
+};
+const css = (v) => COLORS[v] ?? "";
+const hooks = { onResult() {}, onStatus() {}, onBusy() {}, onTf() {}, onHeader() {}, onPick() {}, toast() {} };
+function header() { hooks.onHeader(cur); }
+function verdictPanel() { hooks.onResult({ ...result, name: charName(result.pick), target: fmtP(result.tp, cur.cur), reasonText: reasonText(result, fmtP(result.tp, cur.cur)) }); }
+function buildCharButtons() { hooks.onPick(lastPick, forced); }
+const T = {
+  ko: {
+    title: "차트 낙서 점술관",
+    tag: "차트에 대충 그림을 그려서 미래를 맞힙니다. (안 맞습니다)",
+    ph: "종목명, 티커, 코인 검색 (예: 삼성전자, TSLA, 도지코인)",
+    tabs: { all: "전체", kr: "국내", us: "미국", coin: "코인" },
+    tfs: { d: "일봉", w: "주봉", m: "월봉", h: "6개월봉", y: "1년봉" },
+    redo: "다른 그림으로", save: "이미지 저장", link: "링크 복사",
+    chars: "캐릭터 직접 고르기", auto: "자동 (차트 모양 보고 고름)",
+    up: "오른다!!", down: "내린다!!", flat: "옆으로 기어간다",
+    target: "목표가", conf: "확신도",
+    noRes: "검색 결과가 없어요. 다른 이름이나 티커로 찾아보세요.",
+    direct: (q) => `${q} 차트 직접 불러오기`, directSub: "목록에 없는 종목 코드(6자리)나 미국 티커", notFound: "그 코드로는 차트를 찾지 못했어요",
+    loading: "차트 불러오는 중…", loadErr: "차트 데이터를 불러오지 못했어요. 새로고침해 주세요.",
+    future: "미래 (아직 안 그려짐)", futureShort: "미래",
+    asof: (tfl, d, live) => live ? `${tfl} · 실시간 · ${d}` : `${tfl} · 마지막 ${d}`,
+    aiOn: "AI 그림 끄기", aiOff: "AI 그림 켜기", tooFew: "이 봉으로는 캔들이 너무 적어서 일봉으로 보여드려요", busy: "차트 불러오는 중…",
+    ai: { drawing: "AI가 그림 그리는 중…" },
+    disc1: "재미로 보는 낙서입니다.", disc2: "투자 조언이 아니고, 맞아야 할 이유도 전혀 없습니다.",
+    src: (d) => `데이터: 국내·미국 주식은 네이버 금융, 코인은 바이낸스(USDT). 주식 데이터는 매일 자동 갱신되며 현재 ${d} 기준입니다.`,
+    copied: "링크를 복사했어요", copyFail: "주소창의 링크를 복사해 주세요", saved: "이미지를 저장했어요",
+    cat: { kr: "국내주식", us: "미국주식", coin: "코인" },
+    names: { cat: "고양이", camel: "낙타", whale: "고래", shark: "상어", dino: "목 긴 공룡", snail: "달팽이", rabbit: "토끼", snake: "뱀", ghost: "유령" },
+    lb: {
+      ear1: "귀 ①", ear2: "귀 ② (예정)", hump1: "혹 ①", hump2: "혹 ②", hump2s: "혹 ② (예정)", head: "머리 (예정)",
+      tail: "꼬리 (예정)", spout: "물 뿜는 중", fin: "지느러미", bgm: "빠밤… 빠밤…", neck: "목 (성장 중)",
+      slime: "느릿느릿…", ears: "귀는 원래 두 개", snakeHead: "머리", ghostHead: "유령 머리 = 고점", poof: "스르륵…", body: "몸통",
+    },
+    reason: {
+      cat: (t) => `왼쪽 귀는 이미 그려졌다. 고양이는 귀가 두 개라서, 오른쪽 귀를 그리려면 ${t}까지 올라가야 한다.`,
+      camel2: (t) => `혹 두 개가 완성됐다. 이제 낙타가 고개를 숙일 차례라 ${t}까지 내려간다.`,
+      camel1: (t) => `혹이 하나뿐인 낙타는 단봉낙타라 재미가 없다. 두 번째 혹을 그리러 ${t}까지 오른다.`,
+      whale: (t) => `고래 등은 다 그렸다. 꼬리를 들어 올려야 고래가 완성되므로 ${t}까지 오른다.`,
+      shark: (t) => `방금 오른 건 상어 지느러미다. 지느러미는 반대편으로 꺾여 내려와야 하므로 ${t}까지 내린다.`,
+      dino: (t) => `지금은 공룡 목이 자라는 중이다. 머리를 달 자리가 필요해서 ${t}까지 오른다.`,
+      snail: (t) => `달팽이는 빨리 못 간다. 한동안 ${t} 근처에서 느릿느릿 기어다닌다.`,
+      rabbit: (t) => `토끼 귀는 두 개, 그것도 길다. 귀를 그리느라 ${t}까지 두 번 솟는다.`,
+      snake: (t) => `뱀은 원래 가던 방향으로 간다. 꾸불꾸불 ${t}까지.`,
+      ghost: (t) => `아까 고점은 유령 머리였다. 유령은 결국 사라지므로 ${t}까지 스르륵 내려간다.`,
+    },
+  },
+  en: {
+    title: "Chart Doodle Oracle",
+    tag: "We draw a crappy picture on the chart and call it a forecast. (It isn't.)",
+    ph: "Search stocks, tickers or coins (e.g. NVDA, Samsung, Dogecoin)",
+    tabs: { all: "All", kr: "Korea", us: "US", coin: "Crypto" },
+    tfs: { d: "Daily", w: "Weekly", m: "Monthly", h: "6-Month", y: "Yearly" },
+    redo: "Draw something else", save: "Save image", link: "Copy link",
+    chars: "Pick a character", auto: "Auto (picked from the chart shape)",
+    up: "GOING UP!!", down: "GOING DOWN!!", flat: "CRAWLING SIDEWAYS",
+    target: "Target", conf: "Confidence",
+    noRes: "No matches. Try another name or ticker.",
+    direct: (q) => `Load ${q} directly`, directSub: "A 6-digit Korean code or a US ticker not in the list", notFound: "No chart found for that code",
+    loading: "Loading charts…", loadErr: "Couldn't load chart data. Please refresh.",
+    future: "THE FUTURE (not drawn yet)", futureShort: "FUTURE",
+    asof: (tfl, d, live) => live ? `${tfl} · live · ${d}` : `${tfl} · last ${d}`,
+    aiOn: "Turn AI art off", aiOff: "Turn AI art on", tooFew: "Too few candles at this size, showing daily instead", busy: "Loading chart…",
+    ai: { drawing: "AI is drawing…" },
+    disc1: "This is a doodle, for fun.", disc2: "Not investment advice, and there is no reason it should ever be right.",
+    src: (d) => `Data: Korean and US stocks from Naver Finance, crypto from Binance (USDT). Stock data refreshes daily; current as of ${d}.`,
+    copied: "Link copied", copyFail: "Copy the link from the address bar", saved: "Image saved",
+    cat: { kr: "KR stock", us: "US stock", coin: "Crypto" },
+    names: { cat: "Cat", camel: "Camel", whale: "Whale", shark: "Shark", dino: "Long-neck dino", snail: "Snail", rabbit: "Rabbit", snake: "Snake", ghost: "Ghost" },
+    lb: {
+      ear1: "ear #1", ear2: "ear #2 (soon)", hump1: "hump #1", hump2: "hump #2", hump2s: "hump #2 (soon)", head: "head (soon)",
+      tail: "tail (soon)", spout: "spouting", fin: "fin", bgm: "dun dun… dun dun…", neck: "neck (growing)",
+      slime: "sloooow…", ears: "rabbits need 2 ears", snakeHead: "head", ghostHead: "ghost head = the top", poof: "poof…", body: "body",
+    },
+    reason: {
+      cat: (t) => `The left ear is already drawn. Cats have two ears, so price has to climb to ${t} to draw the right one.`,
+      camel2: (t) => `Both humps are done. Now the camel lowers its head, which takes price down to ${t}.`,
+      camel1: (t) => `A camel with one hump is a boring camel. Price climbs to ${t} to draw hump number two.`,
+      whale: (t) => `The whale's back is finished. A whale needs its tail flipped up, so price rises to ${t}.`,
+      shark: (t) => `That rally was a shark fin. Fins have a back edge, so price drops to ${t}.`,
+      dino: (t) => `The dinosaur's neck is still growing. It needs room for a head, so price goes up to ${t}.`,
+      snail: (t) => `Snails are slow. Price will crawl around ${t} for a while.`,
+      rabbit: (t) => `Rabbits have two long ears. Price spikes to ${t}, twice.`,
+      snake: (t) => `Snakes keep going the way they were going. Wiggle wiggle, all the way to ${t}.`,
+      ghost: (t) => `That top was a ghost's head. Ghosts always vanish, so price fades to ${t}.`,
+    },
+  },
+};
+/* Set this to your Supabase function URL to load stock charts live, e.g.
+   "https://<project-ref>.supabase.co/functions/v1/chart". Empty = use data.json only. */
+const LIVE_API = "https://tnsxhhdmnbhgzqgwosto.supabase.co/functions/v1/chart-doodle";
+const POPULAR = ["kr-005930", "c-BTC", "us-NVDA", "us-TSLA", "kr-000660", "c-DOGE", "kr-KOSPI", "c-XRP", "us-GME"];
+const CHAR_IDS = ["cat", "camel", "whale", "shark", "dino", "snail", "rabbit", "snake", "ghost"];
+const GEN = {}; // generic characters from characters.json
+let ARCH = {};
+
+
+function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function rngOf(seed) { let a = seed >>> 0; return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const fmtDate = (d) => { const s = String(d); return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`; };
+function num(p, maxFrac) {
+  if (p !== 0 && Math.abs(p) < 1) return Number(p.toPrecision(4)).toString().replace(/^(-?)0\./, "$10.");
+  return p.toLocaleString("en-US", { maximumFractionDigits: maxFrac });
+}
+function fmtP(p, curr) {
+  if (curr === "KRW") return LANG === "ko" ? `${Math.round(p).toLocaleString("en-US")}원` : `₩${Math.round(p).toLocaleString("en-US")}`;
+  if (curr === "USD") return "$" + (p < 1 ? num(p) : p.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  if (curr === "USDT") return num(p, p >= 100 ? 0 : p >= 1 ? 2 : 6) + " USDT";
+  return num(p, 2);
+}
+function fmtAxis(p) { return Math.abs(p) >= 1000 ? Math.round(p).toLocaleString("en-US") : num(p, Math.abs(p) >= 10 ? 1 : 3); }
+
+const charName = (id) => T[LANG].names[id] || (GEN[id] ? (LANG === "ko" ? GEN[id].ko : GEN[id].en) : id);
+function josa(w, a, b) { const c = w.charCodeAt(w.length - 1); return c >= 0xAC00 && c <= 0xD7A3 ? ((c - 0xAC00) % 28 ? a : b) : b; }
+function addGeneric(def) {
+  GEN[def.id] = def; CHAR_IDS.push(def.id);
+  const ar = ARCH[def.arche];
+  const pref = {
+    rise: (A) => A.rise > 0.6, curl: (A) => A.rise > 0.6, zigup: (A) => A.rise > 0.3,
+    drop: (A) => A.rise > 1.2 || A.fallSince > 1, bumpdrop: (A) => A.rise > 1.2, crash: (A) => A.rise > 1.4, zigdown: (A) => A.rise < -0.5,
+    hump: (A) => A.fallSince > 0.6, spikes: (A) => A.piv.length >= 4, dipup: (A) => A.rise < -0.8, vee: (A) => A.rise < -1.2, flat: (A) => A.flat,
+  }[def.arche] || (() => false);
+  CHARS[def.id] = {
+    score: (A) => 0.45 + (pref(A) ? 0.95 : 0),
+    build(A, pen) {
+      const U = A.U, pts = [A.L, ...ar.c.map(([fx, du]) => A.F(fx, du))];
+      pen.curve(pts, { w: 4, main: true, dash: def.arche === "flat" ? [8, 7] : null });
+      const tgt = pts[Math.min(ar.t, pts.length - 1)];
+      const ko = LANG === "ko";
+      const right = tgt.x > A.fx0 + 0.55 * A.fw;
+      const ty = tgt.y < A.L.y ? tgt.y - 1.3 * U : tgt.y + 1.4 * U;
+      pen.pointer(clamp(tgt.x + (right ? -1.4 : 1.4) * U, A.box.left + 40, A.box.right - 40), A.cy(ty), tgt.x, tgt.y, ko ? `${def.pk} (예정)` : `${def.pe} (soon)`);
+      const pi = A.lastHigh ? A.lastHigh.i : A.minIn(0.4, 0.9), pp = A.pts[pi];
+      pen.pointer(clamp(pp.x - 1.3 * U, A.box.left + 40, A.box.right - 40), A.cy(pp.y - 1.4 * U), pp.x, pp.y - 0.2 * U, ko ? def.qk : def.qe);
+      return { target: tgt, reason: "g:" + def.id };
+    },
+  };
+}
+function reasonText(r, t) {
+  const L = T[LANG];
+  if (!r.reason.startsWith("g:")) return L.reason[r.reason](t);
+  const g = GEN[r.reason.slice(2)];
+  if (LANG === "ko") {
+    const verb = r.dir > 0 ? "올라간다" : r.dir < 0 ? "내려간다" : "옆으로 기어간다";
+    return `${g.ko}의 ${g.qk}${josa(g.qk, "은", "는")} 이미 그려졌다. 이제 ${g.pk}${josa(g.pk, "을", "를")} 그려야 해서 ${t}${r.dir === 0 ? " 근처에서" : "까지"} ${verb}.`;
+  }
+  const verb = r.dir > 0 ? "climbs to" : r.dir < 0 ? "falls to" : "crawls sideways around";
+  return `The ${g.en.toLowerCase()}'s ${g.qe} is already drawn. It still needs its ${g.pe}, so price ${verb} ${t}.`;
+}
+
+
+function weekKey(d) {
+  const t = Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100);
+  return Math.floor(t / 864e5) - ((new Date(t).getUTCDay() + 6) % 7);
+}
+const KEYF = { w: weekKey, m: (d) => Math.floor(d / 100), h: (d) => Math.floor(d / 10000) * 10 + (Math.floor(d / 100) % 100 <= 6 ? 1 : 2), y: (d) => Math.floor(d / 10000) };
+function agg(rows, keyFn) {
+  const out = []; let k = null;
+  for (const r of rows) {
+    const kk = keyFn(r[0]);
+    if (kk !== k) { out.push([r[0], r[1], r[2], r[3], r[4]]); k = kk; }
+    else { const o = out[out.length - 1]; o[0] = r[0]; o[2] = Math.max(o[2], r[2]); o[3] = Math.min(o[3], r[3]); o[4] = r[4]; }
+  }
+  return out;
+}
+function rowsFor(it, f) {
+  const c = it.tf || {}, daily = c.d || it.d;
+  if (f === "d") return daily;
+  if (f === "w") return c.w || agg(daily, KEYF.w);
+  const monthly = c.m || agg(daily, KEYF.m);
+  return f === "m" ? monthly : agg(monthly, KEYF[f]);
+}
+const isLive = (it, f) => !!(it.tf && it.tf[TF_BASE[f]]);
+async function fetchTf(it, base) {
+  if (it.cat === "coin") {
+    const sym = it.sym.replace("/USDT", ""), iv = { d: "1d", w: "1w", m: "1M" }[base];
+    const r = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${sym}USDT&interval=${iv}&limit=260`);
+    if (!r.ok) return null;
+    const js = await r.json();
+    return Array.isArray(js) ? js.map((k) => { const t = new Date(k[0]); return [t.getUTCFullYear() * 10000 + (t.getUTCMonth() + 1) * 100 + t.getUTCDate(), +k[1], +k[2], +k[3], +k[4]]; }) : null;
+  }
+  if (!LIVE_API) return null;
+  const r = await fetch(`${LIVE_API}?id=${encodeURIComponent(it.id)}&tf=${base}`);
+  if (!r.ok) return null;
+  const js = await r.json();
+  if (js && js.name && it.ko === it.sym) { it.ko = js.name; it.en = js.name; }
+  return js && js.d;
+}
+const inflight = {};
+function ensureTf(it, base) {
+  it.tf = it.tf || {};
+  if (it.tf[base]) return Promise.resolve(true);
+  const k = it.id + ":" + base;
+  if (!inflight[k]) {
+    inflight[k] = fetchTf(it, base)
+      .then((rows) => { if (Array.isArray(rows) && rows.length >= (base === "d" ? 30 : 6)) { it.tf[base] = rows; return true; } return false; })
+      .catch(() => false)
+      .finally(() => { delete inflight[k]; });
+  }
+  return inflight[k];
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function show(animate) {
+  const it = cur, base = TF_BASE[tf];
+  if (!isLive(it, tf)) {
+    if (base === "d") {
+      header(); draw(animate);
+      if (await ensureTf(it, "d") && cur === it && TF_BASE[tf] === "d") { header(); draw(false); }
+      return;
+    }
+    hooks.onBusy(true);
+    await Promise.race([ensureTf(it, base), sleep(6000)]);
+    hooks.onBusy(false);
+    if (cur !== it || TF_BASE[tf] !== base) return;
+  }
+  if (rowsFor(it, tf).length < 6) { hooks.toast(T[LANG].tooFew); tf = "d"; hooks.onTf(tf); return show(animate); }
+  header(); draw(animate);
+  if (base !== "d") ensureTf(it, "d").then((ok) => { if (ok && cur === it) header(); });
+}
+
+
+
+/* ---------- geometry ---------- */
+function catmull(P, seg = 12) {
+  if (P.length < 3) return P.slice();
+  const out = [];
+  for (let i = 0; i < P.length - 1; i++) {
+    const p0 = P[Math.max(0, i - 1)], p1 = P[i], p2 = P[i + 1], p3 = P[Math.min(P.length - 1, i + 2)];
+    for (let k = 0; k < seg; k++) {
+      const t = k / seg, t2 = t * t, t3 = t2 * t;
+      out.push({
+        x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
+        y: 0.5 * (2 * p1.y + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
+      });
+    }
+  }
+  out.push(P[P.length - 1]);
+  return out;
+}
+function ellipsePts(cx, cy, rx, ry, rng, a0 = 0, a1 = Math.PI * 2.08) {
+  const out = [], n = 36, wob = 0.06;
+  for (let i = 0; i <= n; i++) {
+    const a = a0 + (a1 - a0) * (i / n), k = 1 + (rng() - 0.5) * wob;
+    out.push({ x: cx + Math.cos(a) * rx * k, y: cy + Math.sin(a) * ry * k });
+  }
+  return out;
+}
+
+/* Pen: collects strokes; rendered later with crayon wobble and stroke-order animation. */
+function makePen(rng, s) {
+  const items = [];
+  return {
+    items,
+    line(P, o = {}) { if (P.length > 1) items.push({ k: "l", P, w: (o.w || 3.2) * s, dash: o.dash || null, main: !!o.main }); },
+    curve(P, o) { this.line(catmull(P), o); },
+    ell(cx, cy, rx, ry, o, a0, a1) { this.line(ellipsePts(cx, cy, rx, ry, rng, a0, a1), o); },
+    dot(x, y, r = 3) { items.push({ k: "d", x, y, r: r * s }); },
+    arrowHead(from, to, size, main = false) {
+      const a = Math.atan2(to.y - from.y, to.x - from.x), L = size * s;
+      this.line([{ x: to.x - L * Math.cos(a - 0.5), y: to.y - L * Math.sin(a - 0.5) }, to, { x: to.x - L * Math.cos(a + 0.5), y: to.y - L * Math.sin(a + 0.5) }], { w: 3.6, main });
+    },
+    text(x, y, str, o = {}) { items.push({ k: "t", x, y, str, size: (o.size || 19) * s, rot: o.rot ?? (rng() - 0.5) * 0.12, align: o.align || "center", hl: !!o.hl, main: !!o.main }); },
+    pointer(x, y, tx, ty, str) { // label with a scribbly arrow to (tx,ty)
+      this.text(x, y, str);
+      const fx = x + (tx - x) * 0.18, fy = y + (ty - y) * 0.18 + 6 * s;
+      const ex = tx - (tx - x) * 0.12, ey = ty - (ty - y) * 0.12;
+      const mx = (fx + ex) / 2 + (rng() - 0.5) * 12 * s, my = (fy + ey) / 2 + (rng() - 0.5) * 12 * s;
+      const P = catmull([{ x: fx, y: fy }, { x: mx, y: my }, { x: ex, y: ey }], 8);
+      this.line(P, { w: 2.2 }); this.arrowHead(P[P.length - 3], P[P.length - 1], 9);
+    },
+  };
+}
+
+/* ---------- chart analysis ---------- */
+function analyze(rows, box) {
+  const n = rows.length;
+  let lo = Infinity, hi = -Infinity;
+  for (const r of rows) { lo = Math.min(lo, r[3]); hi = Math.max(hi, r[2]); }
+  const span = hi - lo || hi * 0.01 || 1;
+  const pLo = lo - span * 0.42, pHi = hi + span * 0.42;
+  const y = (p) => box.top + (1 - (p - pLo) / (pHi - pLo)) * (box.bottom - box.top);
+  const y2p = (yy) => pLo + (1 - (yy - box.top) / (box.bottom - box.top)) * (pHi - pLo);
+  const cw = box.histW / n, X = (i) => box.left + (i + 0.5) * cw;
+  const k = Math.max(1, Math.round(n / 28));
+  const pts = rows.map((_, i) => {
+    let s = 0, c = 0;
+    for (let j = Math.max(0, i - k); j <= Math.min(n - 1, i + k); j++) { s += rows[j][4]; c++; }
+    return { x: X(i), y: y(s / c) };
+  });
+  pts[n - 1] = { x: X(n - 1), y: y(rows[n - 1][4]) }; // the doodle starts from the real last close
+  const U = (box.bottom - box.top) * 0.1;
+  const v = pts.map((p) => -p.y), vmin = Math.min(...v), vmax = Math.max(...v), th = (vmax - vmin) * 0.16;
+  const piv = []; let mode = 0, hiI = 0, loI = 0;
+  for (let i = 1; i < n; i++) {
+    if (mode !== -1 && v[i] >= v[hiI]) hiI = i;
+    if (mode !== 1 && v[i] <= v[loI]) loI = i;
+    if (mode !== -1 && v[hiI] - v[i] > th) { piv.push({ i: hiI, t: "H" }); mode = -1; loI = i; }
+    else if (mode !== 1 && v[i] - v[loI] > th) { piv.push({ i: loI, t: "L" }); mode = 1; hiI = i; }
+  }
+  if (mode === 1 && hiI > (piv.at(-1)?.i ?? -1)) piv.push({ i: hiI, t: "H", tent: 1 });
+  if (mode === -1 && loI > (piv.at(-1)?.i ?? -1)) piv.push({ i: loI, t: "L", tent: 1 });
+  const highs = piv.filter((p) => p.t === "H"), lows = piv.filter((p) => p.t === "L");
+  const L = pts[n - 1];
+  const idx = (f) => clamp(Math.round(f * (n - 1)), 0, n - 1);
+  const rise = (pts[idx(0.8)].y - L.y) / U;
+  const tail = pts.slice(idx(0.65));
+  const flat = (Math.max(...tail.map((p) => p.y)) - Math.min(...tail.map((p) => p.y))) / ((vmax - vmin) || 1) < 0.28;
+  const lastHigh = highs.at(-1) || null;
+  const fallSince = lastHigh ? (L.y - pts[lastHigh.i].y) / U : 0;
+  const fx0 = L.x, fw = box.right - fx0 - 8 * box.s;
+  const cy = (yy) => clamp(yy, box.top + 14, box.bottom - 8);
+  const F = (fx, du) => ({ x: fx0 + fx * fw, y: cy(L.y - du * U) });
+  const minIn = (a, b) => { let m = idx(a); for (let i = idx(a); i <= idx(b); i++) if (pts[i].y < pts[m].y) m = i; return m; };
+  const maxIn = (a, b) => { let m = idx(a); for (let i = idx(a); i <= idx(b); i++) if (pts[i].y > pts[m].y) m = i; return m; };
+  return { n, rows, pts, U, piv, highs, lows, L, idx, rise, flat, lastHigh, fallSince, fx0, fw, F, cy, y, y2p, box, minIn, maxIn, X, cw, pLo, pHi };
+}
+
+/* ---------- characters ----------
+   Each returns { target, reason } and draws with pen. The future part of the drawing is the "forecast". */
+const CHARS = {
+  cat: {
+    score: (A) => 1 + (A.lastHigh && A.lastHigh.i > 0.5 * A.n ? 1 : 0) + (A.fallSince > 0.8 ? 0.5 : 0),
+    build(A, pen, lb) {
+      const hi = A.lastHigh && A.lastHigh.i > 0.45 * A.n ? A.lastHigh.i : A.minIn(0.5, 0.97);
+      const e1 = A.pts[hi], L = A.L, U = A.U;
+      const fallen = (L.y - e1.y) / U > 0.6;
+      const ax = A.fx0 + 0.42 * A.fw, ay = A.cy(fallen ? e1.y : Math.min(e1.y, L.y) - 0.6 * U);
+      const apex = { x: ax, y: ay };
+      const path = fallen
+        ? [L, { x: A.fx0 + 0.2 * A.fw, y: (L.y + ay) / 2 + 0.2 * U }, apex, { x: A.fx0 + 0.62 * A.fw, y: A.cy(ay + 1.3 * U) }]
+        : [L, { x: A.fx0 + 0.18 * A.fw, y: A.cy(L.y + 0.9 * U) }, apex, { x: A.fx0 + 0.62 * A.fw, y: A.cy(ay + 1.3 * U) }];
+      pen.curve(path, { w: 4, main: true });
+      const faceTop = Math.max(e1.y, ay) + 0.9 * U;
+      let r = Math.max((ax - e1.x) * 0.62, 1.4 * U);
+      let cx = (e1.x + ax) / 2, cyy = faceTop + r * 0.75;
+      const maxB = A.box.bottom - 6;
+      if (cyy + r > maxB) { r = Math.max(0.9 * U, (maxB - faceTop) / 1.75); cyy = faceTop + r * 0.75; }
+      for (const e of [e1, apex]) pen.line([{ x: e.x - 0.5 * U, y: faceTop + 0.4 * U }, e, { x: e.x + 0.5 * U, y: faceTop + 0.4 * U }], { w: 3 });
+      pen.ell(cx, cyy, r * 1.1, r, { w: 3.4 });
+      pen.dot(cx - r * 0.38, cyy - r * 0.12, 4); pen.dot(cx + r * 0.38, cyy - r * 0.12, 4);
+      pen.line([{ x: cx - r * 0.1, y: cyy + r * 0.1 }, { x: cx + r * 0.1, y: cyy + r * 0.1 }, { x: cx, y: cyy + r * 0.22 }, { x: cx - r * 0.1, y: cyy + r * 0.1 }], { w: 2.6 });
+      pen.line([{ x: cx - r * 0.3, y: cyy + r * 0.3 }, { x: cx - r * 0.15, y: cyy + r * 0.44 }, { x: cx, y: cyy + r * 0.3 }, { x: cx + r * 0.15, y: cyy + r * 0.44 }, { x: cx + r * 0.3, y: cyy + r * 0.3 }], { w: 2.6 });
+      for (const sgn of [-1, 1]) for (const dy of [-0.08, 0.12, 0.32]) pen.line([{ x: cx + sgn * r * 0.5, y: cyy + r * 0.2 }, { x: cx + sgn * r * 1.35, y: cyy + r * (0.2 + dy * 1.4) }], { w: 2 });
+      pen.pointer(e1.x - 1.4 * U, e1.y - 1.3 * U, e1.x - 0.1 * U, e1.y - 0.2 * U, lb.ear1);
+      pen.pointer(ax + 0.9 * U, ay - 1.4 * U, ax + 0.1 * U, ay - 0.2 * U, lb.ear2);
+      return { target: apex, reason: "cat" };
+    },
+  },
+  camel: {
+    score: (A) => { const h = A.highs.filter((p) => p.i > 0.25 * A.n).length; return 0.8 + (h >= 2 ? 1.3 : h >= 1 ? 0.6 : 0); },
+    build(A, pen, lb) {
+      const U = A.U, L = A.L, hs = A.highs.filter((p) => p.i > 0.2 * A.n);
+      let target, reason, legL, legR, humps;
+      if (hs.length >= 2) {
+        const h1 = A.pts[hs.at(-2).i], h2 = A.pts[hs.at(-1).i];
+        const neckB = A.F(0.42, -1.8), head = A.F(0.72, -0.7);
+        pen.curve([L, A.F(0.2, -0.8), neckB, A.F(0.6, -1.4), head], { w: 4, main: true });
+        pen.ell(head.x + 0.55 * U, head.y - 0.15 * U, 0.75 * U, 0.42 * U, { w: 3 });
+        pen.dot(head.x + 0.6 * U, head.y - 0.3 * U, 3.4);
+        pen.line([{ x: head.x + 0.1 * U, y: head.y - 0.45 * U }, { x: head.x + 0.2 * U, y: head.y - 0.85 * U }, { x: head.x + 0.35 * U, y: head.y - 0.5 * U }], { w: 2.4 });
+        target = neckB; reason = "camel2"; humps = [[h1, lb.hump1], [h2, lb.hump2]];
+        legL = h1.x - (h2.x - h1.x) * 0.45; legR = L.x + 0.2 * U;
+        pen.pointer(head.x + 0.6 * U, head.y - 1.8 * U, head.x + 0.4 * U, head.y - 0.6 * U, lb.head);
+      } else {
+        const hi = hs.length ? hs.at(-1).i : A.minIn(0.3, 0.9);
+        const h1 = A.pts[hi];
+        const apex = { x: A.fx0 + 0.4 * A.fw, y: A.cy(Math.min(h1.y, L.y - 1.0 * U)) };
+        const head = A.F(0.82, 0.2);
+        pen.curve([L, { x: A.fx0 + 0.12 * A.fw, y: A.cy(L.y + 0.35 * U) }, apex, { x: A.fx0 + 0.66 * A.fw, y: A.cy(L.y + 0.3 * U) }, head], { w: 4, main: true });
+        pen.ell(head.x + 0.45 * U, head.y - 0.1 * U, 0.6 * U, 0.38 * U, { w: 3 });
+        pen.dot(head.x + 0.55 * U, head.y - 0.22 * U, 3.4);
+        target = apex; reason = "camel1"; humps = [[h1, lb.hump1], [apex, lb.hump2s]];
+        legL = h1.x - 1.2 * U; legR = apex.x + 0.6 * U;
+      }
+      let belly = -Infinity; for (let i = A.idx(0.2); i < A.n; i++) if (A.pts[i].x > legL) belly = Math.max(belly, A.pts[i].y);
+      belly = Math.min(belly + 0.7 * U, A.box.bottom - 2.2 * U);
+      pen.curve([{ x: legL, y: belly - 0.3 * U }, { x: (legL + legR) / 2, y: belly + 0.25 * U }, { x: legR, y: belly - 0.3 * U }], { w: 3 });
+      for (const f of [0.08, 0.26, 0.74, 0.92]) {
+        const x = legL + (legR - legL) * f;
+        pen.line([{ x, y: belly }, { x: x + (f < 0.5 ? -0.1 : 0.1) * U, y: Math.min(belly + 1.9 * U, A.box.bottom - 4) }], { w: 3 });
+      }
+      pen.curve([{ x: legL, y: belly - 0.3 * U }, { x: legL - 0.5 * U, y: belly }, { x: legL - 0.4 * U, y: belly + 0.6 * U }], { w: 2.4 });
+      for (const [p, t] of humps) pen.pointer(p.x - 0.4 * U, p.y - 1.5 * U, p.x, p.y - 0.25 * U, t);
+      return { target, reason };
+    },
+  },
+  whale: {
+    score: (A) => 0.8 + (A.rise < -1 ? 1.4 : 0),
+    build(A, pen, lb) {
+      const U = A.U, L = A.L, s = A.idx(0.3);
+      const back = A.pts.slice(s).filter((_, i, a) => i % 2 === 0 || i === a.length - 1);
+      pen.line(back, { w: 4 });
+      const start = A.pts[s];
+      let low = -Infinity; for (let i = s; i < A.n; i++) low = Math.max(low, A.pts[i].y);
+      const bellyY = Math.min(low + 1.4 * U, A.box.bottom - 6);
+      pen.curve([start, { x: start.x + 0.2 * (L.x - start.x), y: bellyY }, { x: start.x + 0.75 * (L.x - start.x), y: bellyY + 0.1 * U }, { x: L.x, y: Math.min(L.y + 0.8 * U, bellyY) }], { w: 3.6 });
+      pen.dot(start.x + 1.0 * U, Math.min(start.y + 0.9 * U, bellyY - 0.6 * U), 4);
+      pen.curve([{ x: start.x + 0.1 * U, y: start.y + 1.3 * U }, { x: start.x + 0.9 * U, y: Math.min(start.y + 1.6 * U, bellyY - 0.2 * U) }, { x: start.x + 1.8 * U, y: Math.min(start.y + 1.4 * U, bellyY - 0.3 * U) }], { w: 2.6 });
+      const top = A.pts[A.minIn(0.35, 0.95)];
+      for (const dx of [-0.7, 0, 0.7]) pen.curve([{ x: top.x, y: top.y - 0.2 * U }, { x: top.x + dx * 0.5 * U, y: top.y - 1.1 * U }, { x: top.x + dx * 1.1 * U, y: top.y - 1.5 * U }], { w: 2.4 });
+      pen.dot(top.x - 0.9 * U, top.y - 1.2 * U, 2.6); pen.dot(top.x + 1.0 * U, top.y - 1.1 * U, 2.6);
+      const tip = A.F(0.36, 1.9);
+      pen.curve([{ x: L.x, y: Math.min(L.y + 0.8 * U, bellyY) }, A.F(0.18, 0.4), tip], { w: 4, main: true });
+      pen.curve([L, A.F(0.14, 0.9), { x: tip.x - 0.1 * U, y: tip.y + 0.2 * U }], { w: 3 });
+      pen.curve([tip, { x: tip.x - 0.4 * U, y: tip.y - 0.9 * U }, { x: tip.x - 1.0 * U, y: tip.y - 1.0 * U }], { w: 3.4 });
+      pen.curve([tip, { x: tip.x + 0.4 * U, y: tip.y - 0.9 * U }, { x: tip.x + 1.1 * U, y: tip.y - 0.9 * U }], { w: 3.4 });
+      pen.pointer(tip.x + 1.6 * U, tip.y + 0.4 * U, tip.x + 0.5 * U, tip.y - 0.3 * U, lb.tail);
+      pen.text(top.x + 2.2 * U, top.y - 1.6 * U, lb.spout);
+      return { target: tip, reason: "whale" };
+    },
+  },
+  shark: {
+    score: (A) => 0.8 + (A.rise > 1 ? 1.4 : 0),
+    build(A, pen, lb) {
+      const U = A.U, L = A.L;
+      let li = A.lows.length ? A.lows.at(-1).i : A.idx(0.8);
+      if (li > A.idx(0.9)) li = A.idx(0.82);
+      const base = A.pts[li];
+      const baseY = Math.max(base.y, L.y + 0.8 * U);
+      pen.line(A.pts.slice(li), { w: 4 });
+      const end = { x: A.fx0 + 0.34 * A.fw, y: A.cy(baseY) };
+      pen.curve([L, { x: A.fx0 + 0.06 * A.fw, y: L.y - 0.15 * U }, { x: A.fx0 + 0.2 * A.fw, y: L.y + 0.5 * (baseY - L.y) }, end], { w: 4, main: true });
+      for (const [dy, a, b] of [[0, base.x - 2.2 * U, A.fx0 + 0.6 * A.fw], [0.75 * U, base.x - 1.2 * U, A.fx0 + 0.45 * A.fw]]) {
+        const P = []; const wy = Math.min(baseY + dy, A.box.bottom - 6);
+        for (let x = a; x <= b; x += 4) P.push({ x, y: wy + Math.sin((x - a) / (0.45 * U)) * 0.18 * U });
+        pen.line(P, { w: 2.6 });
+      }
+      pen.pointer(base.x - 1.6 * U, base.y - 1.8 * U, (base.x + L.x) / 2 - 0.2 * U, (base.y + L.y) / 2, lb.fin);
+      pen.text(A.fx0 + 0.55 * A.fw, Math.min(baseY + 1.7 * U, A.box.bottom - 10), lb.bgm, { size: 17 });
+      return { target: end, reason: "shark" };
+    },
+  },
+  dino: {
+    score: (A) => 0.6 + (A.rise > 1.6 ? 1.7 : 0),
+    build(A, pen, lb) {
+      const U = A.U, L = A.L;
+      const neckTop = A.F(0.42, 2.5);
+      pen.curve([L, A.F(0.22, 1.3), neckTop], { w: 4, main: true });
+      const hc = { x: neckTop.x + 0.75 * U, y: neckTop.y - 0.2 * U };
+      pen.ell(hc.x, hc.y, 1.0 * U, 0.55 * U, { w: 3.4 });
+      pen.dot(hc.x + 0.2 * U, hc.y - 0.15 * U, 3.8);
+      pen.curve([{ x: hc.x + 0.3 * U, y: hc.y + 0.2 * U }, { x: hc.x + 0.6 * U, y: hc.y + 0.3 * U }, { x: hc.x + 0.9 * U, y: hc.y + 0.1 * U }], { w: 2.4 });
+      const m = A.idx(0.5);
+      let mid = -Infinity; for (let i = A.idx(0.25); i <= A.idx(0.8); i++) mid = Math.max(mid, A.pts[i].y);
+      const by = Math.min(mid + 1.3 * U, A.box.bottom - 2.2 * U), bx = A.pts[m].x, rx = A.box.histW * 0.2, ry = 1.1 * U;
+      pen.ell(bx, by, rx, ry, { w: 3.4 });
+      pen.curve([{ x: bx + rx * 0.75, y: by - ry * 0.65 }, { x: (bx + rx + L.x) / 2, y: (by - ry + L.y) / 2 + 0.3 * U }, A.pts[A.idx(0.9)]], { w: 3 });
+      pen.curve([{ x: bx - rx * 0.95, y: by }, { x: bx - rx * 1.4, y: by + 0.2 * U }, { x: Math.max(A.box.left + 6, bx - rx * 1.9), y: by + 0.7 * U }], { w: 3 });
+      for (const f of [-0.6, -0.3, 0.3, 0.6]) pen.line([{ x: bx + f * rx, y: by + ry * 0.85 }, { x: bx + f * rx, y: Math.min(by + ry + 1.0 * U, A.box.bottom - 4) }], { w: 3.4 });
+      pen.pointer(A.F(0.22, 1.3).x + 1.4 * U, A.F(0.22, 1.3).y + 1.2 * U, A.F(0.24, 1.3).x + 0.15 * U, A.F(0.24, 1.3).y + 0.1 * U, lb.neck);
+      pen.pointer(hc.x - 0.6 * U, hc.y - 1.6 * U, hc.x - 0.2 * U, hc.y - 0.6 * U, lb.head);
+      pen.text(bx, by + 0.1 * U, lb.body, { size: 16 });
+      return { target: neckTop, reason: "dino" };
+    },
+  },
+  snail: {
+    score: (A) => 0.6 + (A.flat ? 1.9 : 0),
+    build(A, pen, lb) {
+      const U = A.U, L = A.L;
+      const c = { x: L.x - 1.4 * U, y: A.cy(L.y - 1.0 * U) }, R = 1.0 * U;
+      const P = []; for (let t = 0; t <= Math.PI * 5; t += 0.18) { const r = R * (1 - t / (Math.PI * 5.4)); P.push({ x: c.x + Math.cos(t + Math.PI) * r, y: c.y + Math.sin(t + Math.PI) * r }); }
+      pen.line(P, { w: 3.2 });
+      pen.curve([{ x: c.x - 1.6 * U, y: L.y + 0.1 * U }, { x: c.x, y: L.y + 0.25 * U }, { x: L.x + 0.3 * U, y: L.y + 0.1 * U }, { x: L.x + 0.5 * U, y: L.y - 0.4 * U }], { w: 3.2 });
+      for (const dx of [0.35, 0.75]) { const tip = { x: L.x + dx * U, y: L.y - 1.2 * U }; pen.line([{ x: L.x + 0.4 * U, y: L.y - 0.3 * U }, tip], { w: 2.4 }); pen.dot(tip.x, tip.y, 3.6); }
+      const end = A.F(0.9, 0.08);
+      pen.curve([L, A.F(0.3, -0.12), A.F(0.6, 0.12), end], { w: 3, dash: [7, 7], main: true });
+      pen.text(A.fx0 + 0.5 * A.fw, A.cy(L.y + 1.2 * U), lb.slime);
+      return { target: end, reason: "snail" };
+    },
+  },
+  rabbit: {
+    score: () => 0.95,
+    build(A, pen, lb) {
+      const U = A.U, L = A.L;
+      const e1 = A.F(0.2, 2.6), e2 = A.F(0.38, 2.9);
+      pen.curve([L, A.F(0.1, 0.35), e1, A.F(0.28, 0.45), e2, A.F(0.48, 0.4)], { w: 4, main: true });
+      const fc = { x: A.fx0 + 0.3 * A.fw, y: A.cy(L.y + 0.75 * U) }, r = Math.min(1.1 * U, A.fw * 0.2);
+      pen.ell(fc.x, fc.y, r * 1.15, r, { w: 3.4 });
+      pen.dot(fc.x - r * 0.4, fc.y - r * 0.15, 4); pen.dot(fc.x + r * 0.4, fc.y - r * 0.15, 4);
+      pen.line([{ x: fc.x, y: fc.y + r * 0.05 }, { x: fc.x, y: fc.y + r * 0.3 }], { w: 2.4 });
+      pen.line([{ x: fc.x - r * 0.12, y: fc.y + r * 0.3 }, { x: fc.x - r * 0.12, y: fc.y + r * 0.55 }, { x: fc.x + r * 0.12, y: fc.y + r * 0.55 }, { x: fc.x + r * 0.12, y: fc.y + r * 0.3 }], { w: 2.4 });
+      pen.pointer(e1.x - 2.2 * U, e1.y + 0.4 * U, e1.x - 0.25 * U, e1.y + 0.4 * U, lb.ears);
+      return { target: e2, reason: "rabbit" };
+    },
+  },
+  snake: {
+    score: (A) => 0.6 + (A.piv.length >= 6 ? 1.3 : 0),
+    build(A, pen, lb) {
+      const U = A.U, L = A.L;
+      const d = A.pts[0].y > L.y ? 1 : -1;
+      const pts = [L, A.F(0.18, 0.8 + 0.25 * d), A.F(0.36, -0.5 + 0.6 * d), A.F(0.54, 0.7 + 0.9 * d), A.F(0.7, -0.2 + 1.3 * d)];
+      pen.curve(pts, { w: 4, main: true });
+      const h = pts.at(-1);
+      pen.ell(h.x + 0.5 * U, h.y, 0.65 * U, 0.4 * U, { w: 3.4 });
+      pen.dot(h.x + 0.6 * U, h.y - 0.12 * U, 3.4);
+      pen.line([{ x: h.x + 1.15 * U, y: h.y + 0.05 * U }, { x: h.x + 1.55 * U, y: h.y + 0.05 * U }, { x: h.x + 1.8 * U, y: h.y - 0.15 * U }], { w: 2 });
+      pen.line([{ x: h.x + 1.55 * U, y: h.y + 0.05 * U }, { x: h.x + 1.8 * U, y: h.y + 0.25 * U }], { w: 2 });
+      for (const f of [0.2, 0.35, 0.5, 0.65, 0.8]) { const p = A.pts[A.idx(f)]; pen.line([{ x: p.x - 0.2 * U, y: p.y - 0.2 * U }, { x: p.x, y: p.y + 0.05 * U }, { x: p.x + 0.2 * U, y: p.y - 0.2 * U }], { w: 2 }); }
+      pen.pointer(h.x + 0.3 * U, h.y + (d > 0 ? 1.6 : -1.6) * U, h.x + 0.4 * U, h.y + (d > 0 ? 0.45 : -0.45) * U, lb.snakeHead);
+      return { target: h, reason: "snake" };
+    },
+  },
+  ghost: {
+    score: (A) => 0.6 + (A.lastHigh && A.lastHigh.i > 0.3 * A.n && A.lastHigh.i < 0.85 * A.n && A.fallSince > 1.2 ? 1.5 : 0),
+    build(A, pen, lb) {
+      const U = A.U, L = A.L;
+      const ti = A.lastHigh && A.lastHigh.i < 0.92 * A.n ? A.lastHigh.i : A.minIn(0.3, 0.85);
+      const top = A.pts[ti], w = 1.7 * U;
+      const bottom = Math.min(top.y + 3.2 * U, A.box.bottom - 0.5 * U);
+      const sideY = (x) => { let best = A.pts[0]; for (const p of A.pts) if (Math.abs(p.x - x) < Math.abs(best.x - x)) best = p; return Math.max(best.y, top.y + 0.6 * U); };
+      const lx = top.x - w, rx = top.x + w;
+      pen.line([{ x: lx, y: sideY(lx) }, { x: lx, y: bottom }], { w: 3.2 });
+      const W = []; for (let x = lx; x <= rx; x += 3) W.push({ x, y: bottom - Math.abs(Math.sin(((x - lx) / (2 * w)) * Math.PI * 3)) * 0.5 * U });
+      pen.line(W, { w: 3.2 });
+      pen.line([{ x: rx, y: bottom }, { x: rx, y: sideY(rx) }], { w: 3.2 });
+      pen.ell(top.x - 0.5 * U, top.y + 1.0 * U, 0.2 * U, 0.3 * U, { w: 3.6 });
+      pen.ell(top.x + 0.5 * U, top.y + 1.0 * U, 0.2 * U, 0.3 * U, { w: 3.6 });
+      pen.ell(top.x, top.y + 1.9 * U, 0.28 * U, 0.36 * U, { w: 3 });
+      const end = A.F(0.85, -3.0);
+      pen.curve([L, A.F(0.25, -0.8), A.F(0.55, -2.1), end], { w: 4, dash: [10, 7], main: true });
+      pen.pointer(top.x + 2.4 * U, top.y - 1.2 * U, top.x + 0.3 * U, top.y - 0.2 * U, lb.ghostHead);
+      pen.text(A.fx0 + 0.6 * A.fw, A.cy(L.y - 0.6 * U), lb.poof);
+      return { target: end, reason: "ghost" };
+    },
+  },
+};
+
+/* ---------- rendering ---------- */
+let base = null, layout = null, result = null;
+function sizeCanvas() {
+  const w = cv.parentElement.clientWidth;
+  const h = Math.round(w < 560 ? w * 0.95 : clamp(w * 0.56, 340, 560));
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); cv.style.height = h + "px";
+  const s = clamp(w / 820, 0.68, 1.1);
+  return { w, h, dpr, s };
+}
+function drawBase(c, A, L) {
+  const { box } = A, rows = A.rows, n = rows.length;
+  const up = css(`--up-${LANG}`), dn = css(`--down-${LANG}`), line = css("--line"), muted = css("--muted"), fut = css("--future"), bg = css("--panel");
+  c.fillStyle = bg; c.fillRect(0, 0, box.W, box.H);
+  c.fillStyle = fut; c.fillRect(A.fx0, box.top - 8, box.right - A.fx0 + 6, box.bottom - box.top + 16);
+  c.strokeStyle = line; c.lineWidth = 1; c.font = `500 ${11 * box.s + 1}px ${css("--font-num")}`; c.fillStyle = muted; c.textAlign = "left"; c.textBaseline = "middle";
+  const ticks = 5;
+  for (let t = 0; t <= ticks; t++) {
+    const yy = box.top + (box.bottom - box.top) * (t / ticks);
+    c.beginPath(); c.moveTo(box.left, Math.round(yy) + 0.5); c.lineTo(box.right, Math.round(yy) + 0.5); c.stroke();
+    const pv = A.y2p(yy); if (pv >= 0) c.fillText(fmtAxis(pv), box.right + 6, yy);
+  }
+  c.setLineDash([4, 5]); c.beginPath(); c.moveTo(Math.round(A.fx0) + 0.5, box.top - 8); c.lineTo(Math.round(A.fx0) + 0.5, box.bottom + 8); c.stroke(); c.setLineDash([]);
+  c.textBaseline = "top"; c.textAlign = "center";
+  const dates = [0, Math.floor(n / 2), n - 1];
+  dates.forEach((i, k) => { c.textAlign = k === 2 ? "right" : k === 0 ? "left" : "center"; c.fillText(fmtDate(rows[i][0]).slice(2), k === 2 ? A.fx0 - 4 : k === 0 ? box.left : A.X(i), box.bottom + 8); });
+  c.textAlign = "center"; c.font = `${15 * box.s + 2}px ${css("--font-doodle")}`; c.fillText(box.W < 560 ? L.futureShort : L.future, (A.fx0 + box.right) / 2, box.bottom + 6);
+  const bw = Math.max(1, A.cw * 0.62);
+  for (let i = 0; i < n; i++) {
+    const [, o, h, l, cl] = rows[i], col = cl >= o ? up : dn, x = A.X(i);
+    c.strokeStyle = col; c.fillStyle = col; c.lineWidth = Math.max(1, Math.min(1.4, A.cw * 0.18));
+    c.beginPath(); c.moveTo(x, A.y(h)); c.lineTo(x, A.y(l)); c.stroke();
+    const y1 = A.y(Math.max(o, cl)), y2 = A.y(Math.min(o, cl));
+    c.fillRect(x - bw / 2, y1, bw, Math.max(1, y2 - y1));
+  }
+  const last = rows[n - 1][4], ly = A.y(last);
+  c.setLineDash([2, 3]); c.strokeStyle = muted; c.beginPath(); c.moveTo(box.left, ly); c.lineTo(box.right, ly); c.stroke(); c.setLineDash([]);
+}
+function jitter(P, rng, amp, step) {
+  const out = []; if (!P.length) return out;
+  const ph1 = rng() * 10, ph2 = rng() * 10, f1 = 0.05 + rng() * 0.05, f2 = 0.13 + rng() * 0.08;
+  let acc = 0;
+  out.push({ ...P[0], d: 0 });
+  for (let i = 1; i < P.length; i++) {
+    const a = P[i - 1], b = P[i], seg = Math.hypot(b.x - a.x, b.y - a.y), k = Math.max(1, Math.ceil(seg / step));
+    for (let j = 1; j <= k; j++) {
+      const t = j / k, x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+      acc += seg / k;
+      const nx = Math.sin(acc * f1 + ph1) * amp + Math.sin(acc * f2 + ph2) * amp * 0.5;
+      const ny = Math.cos(acc * f1 * 1.3 + ph2) * amp + Math.sin(acc * f2 * 0.8 + ph1) * amp * 0.5;
+      out.push({ x: x + nx, y: y + ny, d: acc });
+    }
+  }
+  return out;
+}
+function prepStrokes(items, rng, s) {
+  const out = []; let total = 0;
+  for (const it of items) {
+    if (it.k === "l") {
+      const a = jitter(it.P, rng, 1.3 * s, 5), b = jitter(it.P, rng, 1.9 * s, 6);
+      const len = a.length ? a[a.length - 1].d : 0;
+      out.push({ ...it, a, b, start: total, len }); total += len;
+    } else if (it.k === "d") { out.push({ ...it, start: total, len: 6 }); total += 6; }
+    else { out.push({ ...it, start: total, len: 60 * s }); total += 60 * s; }
+  }
+  return { strokes: out, total };
+}
+function paintStrokes(c, prep, upto, ink, hl, mainOnly) {
+  c.lineCap = "round"; c.lineJoin = "round";
+  for (const st of prep.strokes) {
+    if (st.start > upto) break;
+    if (mainOnly && !st.main) continue;
+    const local = upto - st.start;
+    if (st.k === "l") {
+      c.strokeStyle = ink; c.setLineDash(st.dash || []);
+      for (const [P, w, al] of [[st.a, st.w, 0.95], [st.b, st.w * 0.55, 0.45]]) {
+        c.globalAlpha = al; c.lineWidth = w; c.beginPath();
+        for (let i = 0; i < P.length && P[i].d <= local; i++) i === 0 ? c.moveTo(P[i].x, P[i].y) : c.lineTo(P[i].x, P[i].y);
+        c.stroke();
+      }
+      c.globalAlpha = 1; c.setLineDash([]);
+    } else if (st.k === "d") {
+      c.fillStyle = ink; c.beginPath(); c.arc(st.x, st.y, st.r, 0, Math.PI * 2); c.fill();
+    } else {
+      c.save(); c.translate(st.x, st.y); c.rotate(st.rot);
+      c.font = `700 ${st.size}px ${css("--font-doodle")}`; c.textAlign = st.align; c.textBaseline = "middle";
+      if (st.hl) { const w = c.measureText(st.str).width; c.fillStyle = hl; const x0 = st.align === "center" ? -w / 2 : 0; c.fillRect(x0 - 6, -st.size * 0.1, w + 12, st.size * 0.55); }
+      c.globalAlpha = Math.min(1, local / (40)); c.fillStyle = ink; c.fillText(st.str, 0, 0); c.restore(); c.globalAlpha = 1;
+    }
+  }
+}
+
+function rank(A, seed) {
+  const r = rngOf(seed);
+  return CHAR_IDS.map((id) => [id, CHARS[id].score(A) + r() * 1.3]).sort((a, b) => b[1] - a[1]).map((x) => x[0]);
+}
+
+function draw(animate) {
+  if (!cur) return;
+  cancelAnimationFrame(animId);
+  const L = T[LANG];
+  const { w, h, dpr, s } = sizeCanvas();
+  const rows = rowsFor(cur, tf).slice(-TF_SHOW[tf]);
+  const box = { W: w, H: h, s, left: 8, right: w - 64 * clamp(s, 0.8, 1), top: 20, bottom: h - 30 };
+  box.histW = (box.right - box.left) * (w < 560 ? 0.62 : 0.68);
+  const A = analyze(rows, box);
+  const seed = hash(cur.id + ":" + tf + ":" + rows[rows.length - 1][0]);
+  lastRank = rank(A, seed);
+  const pick = forced || lastRank[reroll % lastRank.length];
+  lastPick = pick;
+  const rng = rngOf(seed ^ hash(pick));
+  const pen = makePen(rng, s);
+  const res = CHARS[pick].build(A, pen, L.lb);
+  const lastClose = rows[rows.length - 1][4];
+  const tp = Math.max(A.y2p(res.target.y), rows[rows.length - 1][4] * 0.03);
+  const dir = Math.abs(res.target.y - A.L.y) < 0.25 * A.U ? 0 : res.target.y < A.L.y ? 1 : -1;
+  const pct = (tp / lastClose - 1) * 100;
+  const confs = [420, 1000, 9999, 777, 101, 3000, 6974];
+  result = { pick, dir, tp, pct, conf: confs[Math.floor(rng() * confs.length)], reason: res.reason };
+  // big verdict on the canvas, plus the arrow at the target
+  const vt = dir > 0 ? L.up : dir < 0 ? L.down : L.flat;
+  const prev = pen.items.length;
+  pen.arrowHead({ x: res.target.x - 10 * s, y: res.target.y + dir * 10 * s }, res.target, 16, true);
+  const vy = res.target.y < (box.top + box.bottom) / 2 ? box.bottom - 22 * s : box.top + 14 * s;
+  pen.text((A.fx0 + box.right) / 2, vy, vt, { size: w < 560 ? 24 : 32, rot: -0.06, hl: true, main: true });
+  void prev;
+  layout = { A, box, dpr };
+  // cache base
+  base = document.createElement("canvas"); base.width = cv.width; base.height = cv.height;
+  const bc = base.getContext("2d"); bc.setTransform(dpr, 0, 0, dpr, 0, 0); drawBase(bc, A, L);
+  const prep = prepStrokes(pen.items, rngOf(seed + 7), s);
+  const ink = css("--ink"), hl = css("--hl");
+  // AI art: same chart + character + candle set -> same request key
+  const mainItem = pen.items.find((i) => i.k === "l" && i.main);
+  const path = mainItem ? mainItem.P : [A.L];
+  const key = `${cur.id}|${tf}|${pick}|${rows[rows.length - 1][0]}|${rows.length}`;
+  if (ai.key !== key) {
+    ai.key = key; ai.img = null; ai.layer = null;
+    if (AI_ON && ART_API) requestArt(key, shapeSig(A, box, path), () => lineImage(A, box, path), pick, dir);
+    else setAi("");
+  }
+  const frame = (upto) => {
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(base, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const lay = AI_ON && ai.key === key ? aiLayer() : null;
+    if (lay) { ctx.globalAlpha = 0.95; ctx.drawImage(lay, box.left, box.top, box.right - box.left, box.bottom - box.top); ctx.globalAlpha = 1; }
+    paintStrokes(ctx, prep, upto, ink, hl, !!lay);
+  };
+  currentFrame = frame;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!animate || reduce) { animating = false; frame(Infinity); }
+  else {
+    animating = true;
+    const t0 = performance.now(), dur = clamp(prep.total * 1.1, 1400, 2600);
+    const step = (t) => { const k = Math.min(1, (t - t0) / dur); frame(prep.total * (1 - Math.pow(1 - k, 1.6))); if (k < 1) animId = requestAnimationFrame(step); else animating = false; };
+    animId = requestAnimationFrame(step);
+  }
+  verdictPanel();
+  buildCharButtons();
+}
+/* ---------- AI art ---------- */
+function setStat(text, busy = false) { hooks.onStatus(text, busy); }
+function setAi(state, sim = 0) {
+  ai.state = state; ai.sim = sim;
+  const A = T[LANG].ai;
+  if (!state) return setStat("");
+  setStat(A[state] || "", state === "drawing");
+}
+function shapeSig(A, box, path) {
+  const P = A.pts.concat(path.slice(1)), W = box.right - box.left, H = box.bottom - box.top;
+  const xs = P.map((p) => (p.x - box.left) / W), ys = P.map((p) => (p.y - box.top) / H);
+  const out = []; let j = 0;
+  for (let i = 0; i < 48; i++) {
+    const x = (i + 0.5) / 48;
+    while (j < xs.length - 2 && xs[j + 1] < x) j++;
+    let y;
+    if (x <= xs[0]) y = ys[0];
+    else { const t = (x - xs[j]) / ((xs[j + 1] - xs[j]) || 1); y = ys[j] + (ys[j + 1] - ys[j]) * clamp(t, 0, 1); }
+    out.push(+clamp(y, -0.5, 1.5).toFixed(4));
+  }
+  return out;
+}
+function lineImage(A, box, path) {
+  const c = document.createElement("canvas"); c.width = 1024; c.height = 768;
+  const g = c.getContext("2d"), sx = 1024 / (box.right - box.left), sy = 768 / (box.bottom - box.top);
+  g.fillStyle = "#fff"; g.fillRect(0, 0, 1024, 768);
+  g.strokeStyle = "#000"; g.lineWidth = 8; g.lineJoin = "round"; g.lineCap = "round"; g.beginPath();
+  A.pts.concat(path.slice(1)).forEach((p, i) => { const x = (p.x - box.left) * sx, y = (p.y - box.top) * sy; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.stroke();
+  return c.toDataURL("image/png");
+}
+const isDark = () => false;
+function aiLayer() {
+  if (!ai.img) return null;
+  const dark = isDark();
+  if (ai.layer && ai.dark === dark) return ai.layer;
+  const img = ai.img, W = Math.min(img.naturalWidth, 1024), H = Math.round(img.naturalHeight * W / img.naturalWidth);
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d"); g.drawImage(img, 0, 0, W, H);
+  try {
+    const d = g.getImageData(0, 0, W, H), p = d.data;
+    for (let i = 0; i < p.length; i += 4) {
+      const r = p[i], gg = p[i + 1], b = p[i + 2], mn = Math.min(r, gg, b), mx = Math.max(r, gg, b);
+      p[i + 3] = Math.round(clamp((246 - mn) / 50, 0, 1) * 255); // white paper -> transparent
+      if (dark && mx - mn < 40) { const v = Math.max(255 - (r + gg + b) / 3, 175); p[i] = p[i + 1] = p[i + 2] = v; } // black ink -> light ink
+    }
+    g.putImageData(d, 0, 0);
+  } catch (e) { return null; }
+  ai.layer = c; ai.dark = dark;
+  return c;
+}
+function loadImg(url) {
+  return new Promise((res, rej) => { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => res(im); im.onerror = rej; im.src = url; });
+}
+async function requestArt(key, sig, lineFn, pick, dir) {
+  setAi("drawing");
+  const post = (body) => fetch(ART_API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    let r = await post({ char: pick, dir, sig, reuseOnly: true });
+    let js = await r.json().catch(() => ({}));
+    if (ai.key !== key) return;
+    if (!js.url) {
+      r = await post({ char: pick, dir, sig, line: lineFn() });
+      js = await r.json().catch(() => ({}));
+      if (ai.key !== key) return;
+      if (!r.ok || !js.url) { setAi(""); return; }
+    }
+    const im = await loadImg(js.url);
+    if (ai.key !== key) return;
+    ai.img = im; ai.layer = null;
+    setAi("");
+    if (!animating && currentFrame) currentFrame(Infinity);
+  } catch (e) { if (ai.key === key) setAi(""); }
+}
+
+
+/* ---------- public API ---------- */
+const ART_API = LIVE_API.replace(/chart-doodle$/, "chart-doodle-art");
+export const engine = {
+  T: () => T[LANG],
+  async load(base = "") {
+    const [data, chars] = await Promise.all([
+      fetch(base + "data.json").then((r) => r.json()),
+      fetch(base + "characters.json").then((r) => r.json()),
+    ]);
+    ITEMS = data.items; for (const it of ITEMS) BYID[it.id] = it;
+    ARCH = chars.archetypes; chars.generic.forEach(addGeneric);
+    return { items: ITEMS, asof: data.asof };
+  },
+  attach(canvas, h) { cv = canvas; ctx = cv.getContext("2d"); Object.assign(hooks, h); },
+  items: () => ITEMS,
+  popular: () => POPULAR.map((id) => BYID[id]).filter(Boolean),
+  byId: (id) => BYID[id],
+  directItem(q) {
+    const s = q.trim().toUpperCase();
+    if (/^\d{6}$/.test(s)) return { id: "kr-" + s, sym: s, ko: s, en: s, cat: "kr", cur: "KRW", d: null, direct: true };
+    if (/^[A-Z]{1,5}$/.test(s)) return { id: "us-" + s, sym: s, ko: s, en: s, cat: "us", cur: "USD", d: null, direct: true };
+    return null;
+  },
+  async select(it) {
+    if (!it.d) {
+      const ok = await ensureTf(it, "d");
+      if (!ok) return false;
+      it.d = it.tf.d;
+      if (!BYID[it.id]) { ITEMS.push(it); BYID[it.id] = it; }
+    }
+    cur = it; reroll = 0; forced = null; tf = "d"; hooks.onTf(tf);
+    await show(true);
+    return true;
+  },
+  async setTf(f) { if (f === tf) return; tf = f; reroll = 0; await show(true); },
+  redo() {
+    if (forced) { const i = lastRank.indexOf(forced); forced = null; reroll = i + 1; } else reroll++;
+    if (lastRank[reroll % lastRank.length] === lastPick) reroll++;
+    draw(true);
+  },
+  setForced(id) { forced = id || null; if (!forced) reroll = 0; draw(true); },
+  redraw() { if (cur) draw(false); },
+  characters() { return [...CHAR_IDS].map((id) => ({ id, name: charName(id) })).sort((a, b) => a.name.localeCompare(b.name, "ko")); },
+  header() {
+    const d = rowsFor(cur, "d"), last = d[d.length - 1], prev = d[d.length - 2], tr = rowsFor(cur, tf);
+    return { name: cur.ko, sub: `${cur.sym} · ${T.ko.cat[cur.cat]} · ${cur.en}`, price: fmtP(last[4], cur.cur), change: (last[4] / prev[4] - 1) * 100, asof: T.ko.asof(T.ko.tfs[tf], fmtDate(tr[tr.length - 1][0]), isLive(cur, tf)) };
+  },
+  snapshot() {
+    // chart canvas plus a title band, for saving as an image
+    const dpr = layout.dpr, pad = 20 * dpr, headH = 64 * dpr, footH = 36 * dpr;
+    const out = document.createElement("canvas"); out.width = cv.width + pad * 2; out.height = cv.height + headH + footH;
+    const c = out.getContext("2d");
+    c.fillStyle = "#FFFFFF"; c.fillRect(0, 0, out.width, out.height);
+    c.fillStyle = "#191F28"; c.font = `700 ${20 * dpr}px system-ui, sans-serif`; c.textBaseline = "top";
+    c.fillText(`${cur.ko}  ${cur.sym}`, pad, pad);
+    c.fillStyle = result.dir > 0 ? "#F04452" : result.dir < 0 ? "#3182F6" : "#191F28"; c.font = `700 ${18 * dpr}px Gaegu, cursive`;
+    const vt = result.dir > 0 ? T.ko.up : result.dir < 0 ? T.ko.down : T.ko.flat;
+    c.fillText(`${vt}  ${charName(result.pick)} · ${T.ko.target} ${fmtP(result.tp, cur.cur)}`, pad, pad + 28 * dpr);
+    c.drawImage(cv, pad, headH);
+    c.fillStyle = "#8B95A1"; c.font = `500 ${11 * dpr}px system-ui, sans-serif`;
+    c.fillText(`${T.ko.title} · ${T.ko.disc1}`, pad, headH + cv.height + 10 * dpr);
+    return out.toDataURL("image/png");
+  },
+  get cur() { return cur; }, get tf() { return tf; }, TFS,
+};
