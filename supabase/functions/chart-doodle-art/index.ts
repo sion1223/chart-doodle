@@ -1,7 +1,7 @@
 // Supabase Edge Function: AI character art for Chart Doodle Oracle.
 //
 // POST /functions/v1/chart-doodle-art
-//   { char, dir, sig: number[48], line: "data:image/png;base64,..." }
+//   { char, dir, aspect: "16:9", sig: number[48], line: "data:image/png;base64,..." }
 //
 // 1. Looks for previously generated art of the same character whose shape signature
 //    (chart + forecast path, 48 samples in 0..1) is close enough; if found, reuses it.
@@ -19,6 +19,7 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization, apikey, content-type",
 };
 const SIG_LEN = 48;
+const ASPECTS = new Set(["1:1", "4:3", "3:2", "16:9", "21:9"]);
 const MODEL = Deno.env.get("BAZE_IMAGE_MODEL") ?? "gemini-3.1-flash-lite-image";
 const IP_LIMIT = +(Deno.env.get("DOODLE_IP_DAILY_LIMIT") ?? 20);
 const GLOBAL_LIMIT = +(Deno.env.get("DOODLE_GLOBAL_DAILY_LIMIT") ?? 150);
@@ -46,10 +47,11 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "Use POST." }, 405);
 
-  let body: { char?: string; dir?: number; sig?: number[]; line?: string; reuseOnly?: boolean };
+  let body: { char?: string; dir?: number; aspect?: string; sig?: number[]; line?: string; reuseOnly?: boolean };
   try { body = await req.json(); } catch { return json({ error: "Body must be JSON." }, 400); }
-  const { char = "", dir = 0, sig, line, reuseOnly } = body;
+  const { char = "", dir = 0, aspect = "4:3", sig, line, reuseOnly } = body;
   if (!SUBJECT[char]) return json({ error: "Unknown character." }, 400);
+  if (!ASPECTS.has(aspect)) return json({ error: "Unsupported aspect." }, 400);
   if (!Array.isArray(sig) || sig.length !== SIG_LEN || sig.some((v) => typeof v !== "number" || !isFinite(v) || v < -1 || v > 2)) {
     return json({ error: `sig must be ${SIG_LEN} numbers.` }, 400);
   }
@@ -59,7 +61,7 @@ Deno.serve(async (req) => {
   const vec = `[${sig.map((v) => v.toFixed(4)).join(",")}]`;
 
   // 1) reuse
-  const { data: hit, error: mErr } = await sb.rpc("match_doodle_art", { p_char: char, p_sig: vec });
+  const { data: hit, error: mErr } = await sb.rpc("match_doodle_art_v2", { p_char: char, p_sig: vec, p_aspect: aspect });
   if (mErr) return json({ error: `Lookup failed: ${mErr.message}` }, 500);
   const best = hit?.[0];
   const rms = best ? best.distance / Math.sqrt(SIG_LEN) : Infinity;
@@ -81,17 +83,19 @@ Deno.serve(async (req) => {
   if (!ok) return json({ error: "Daily drawing limit reached.", limited: true }, 429);
 
   const [subject, layout] = SUBJECT[char];
+  // The sketch has the same aspect ratio as the chart area, so the curve must come back exactly where it was.
   const prompt =
-    `This image is a black curve on a white canvas. Turn it into a funny, crude, hand-drawn doodle of ${subject}: ${layout}. ` +
-    `Keep the black curve exactly where it is, at the same size and position, and draw the rest of the picture around it. ` +
-    `Thick marker strokes, a few flat colors, childish MS Paint style, plain white background, no text, no frame, no axes.`;
+    `The input image is a thick black line (a stock price chart) on a white background. Turn it into a crude, funny doodle of ${subject}: ${layout}. ` +
+    `The black line must stay exactly where it is, pixel for pixel: do not move, redraw, smooth, thicken or resize it. ` +
+    `Add only the missing strokes, connected directly to the line so the line and your strokes read as one continuous drawing. ` +
+    `Black ink lines only: no color, no fill, no gray, no shading, no background, no text, no frame. Plain white background. Thick marker strokes, childish MS Paint style.`;
 
   let r: Response;
   try {
     r = await fetch("https://api.baze.co/v1/gateway/images/generate/", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "User-Agent": "chart-doodle/1.0" },
-      body: JSON.stringify({ model: MODEL, prompt, aspect_ratio: "4:3", input_images: [line] }),
+      body: JSON.stringify({ model: MODEL, prompt, aspect_ratio: aspect, input_images: [line] }),
       signal: AbortSignal.timeout(90_000),
     });
   } catch (e) {
@@ -115,7 +119,7 @@ Deno.serve(async (req) => {
   const path = `${char}/${crypto.randomUUID()}.${ext}`;
   const { error: uErr } = await sb.storage.from("doodle-art").upload(path, bytes, { contentType: type, cacheControl: "31536000" });
   if (uErr) return json({ error: `Saving the image failed: ${uErr.message}` }, 500);
-  const { error: iErr } = await sb.from("doodle_art").insert({ char, dir: Math.sign(dir), sig: vec, image_path: path, model: MODEL });
+  const { error: iErr } = await sb.from("doodle_art").insert({ char, dir: Math.sign(dir), aspect, sig: vec, image_path: path, model: MODEL });
   if (iErr) return json({ error: `Saving the record failed: ${iErr.message}` }, 500);
 
   return json({ url: publicUrl(path), reused: false });
