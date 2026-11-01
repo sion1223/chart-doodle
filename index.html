@@ -78,6 +78,10 @@ canvas{display:block;width:100%;touch-action:pan-y}
 .charsrow .lbl{font-size:12px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
 footer{color:var(--muted);font-size:12.5px;display:grid;gap:4px}
 footer strong{color:var(--fg);font-weight:500}
+.aistat{padding:6px 16px 0;color:var(--muted);font-size:12.5px;min-height:1.9em}
+.aistat.busy::before{content:"";display:inline-block;width:8px;height:8px;margin-right:7px;border-radius:50%;background:var(--ink);animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.25}}
+canvas.dim{opacity:.45;transition:opacity .2s}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:13.5px;opacity:0;transition:opacity .2s;pointer-events:none}
 .toast.on{opacity:1}
 .loading{padding:60px 16px;text-align:center;color:var(--muted);font:22px var(--font-doodle)}
@@ -124,6 +128,7 @@ footer strong{color:var(--fg);font-weight:500}
         <div class="sub" id="asof" style="color:var(--muted);font:500 12px var(--font-num);align-self:center"></div>
       </div>
       <div class="cv"><canvas id="cv" aria-label="chart"></canvas></div>
+      <div class="aistat" id="aistat" role="status"></div>
       <div class="verdict">
         <div class="vtext">
           <span class="vbig" id="vbig"></span>
@@ -132,6 +137,7 @@ footer strong{color:var(--fg);font-weight:500}
         </div>
         <div class="actions">
           <button class="btn primary" id="b-redo" type="button"></button>
+          <button class="btn" id="b-ai" type="button"></button>
           <button class="btn" id="b-save" type="button"></button>
           <button class="btn" id="b-link" type="button"></button>
         </div>
@@ -161,7 +167,7 @@ const T = {
     tag: "차트에 대충 그림을 그려서 미래를 맞힙니다. (안 맞습니다)",
     ph: "종목명, 티커, 코인 검색 (예: 삼성전자, TSLA, 도지코인)",
     tabs: { all: "전체", kr: "국내", us: "미국", coin: "코인" },
-    periods: { 60: "3개월", 120: "6개월", 250: "1년" },
+    tfs: { d: "일봉", w: "주봉", m: "월봉", h: "6개월봉", y: "1년봉" },
     redo: "다른 그림으로", save: "이미지 저장", link: "링크 복사",
     chars: "캐릭터 직접 고르기",
     up: "오른다!!", down: "내린다!!", flat: "옆으로 기어간다",
@@ -170,7 +176,9 @@ const T = {
     direct: (q) => `${q} 차트 직접 불러오기`, directSub: "목록에 없는 종목 코드(6자리)나 미국 티커", notFound: "그 코드로는 차트를 찾지 못했어요",
     loading: "차트 불러오는 중…", loadErr: "차트 데이터를 불러오지 못했어요. 새로고침해 주세요.",
     future: "미래 (아직 안 그려짐)", futureShort: "미래",
-    asof: (d, live) => live ? `일봉 · 실시간 · ${d}` : `일봉 · 마지막 거래일 ${d}`,
+    asof: (tfl, d, live) => live ? `${tfl} · 실시간 · ${d}` : `${tfl} · 마지막 ${d}`,
+    aiOn: "AI 그림 끄기", aiOff: "AI 그림 켜기", tooFew: "이 봉으로는 캔들이 너무 적어서 일봉으로 보여드려요", busy: "차트 불러오는 중…",
+    ai: { drawing: "AI가 이 차트 모양에 맞춰 캐릭터를 그리는 중… (5~10초)", reused: (p) => `전에 그린 비슷한 모양의 그림을 다시 썼어요 (닮은 정도 ${p}%)`, fresh: "AI가 이 차트에 맞춰 새로 그렸어요", limited: "오늘 AI 그림 한도를 다 써서 낙서로만 보여드려요", fail: "AI 그림을 못 불러와서 낙서로만 보여드려요" },
     disc1: "재미로 보는 낙서입니다.", disc2: "투자 조언이 아니고, 맞아야 할 이유도 전혀 없습니다.",
     src: (d) => `데이터: 국내·미국 주식은 네이버 금융, 코인은 바이낸스(USDT). 주식 데이터는 매일 자동 갱신되며 현재 ${d} 기준입니다.`,
     copied: "링크를 복사했어요", copyFail: "주소창의 링크를 복사해 주세요", saved: "이미지를 저장했어요",
@@ -199,7 +207,7 @@ const T = {
     tag: "We draw a crappy picture on the chart and call it a forecast. (It isn't.)",
     ph: "Search stocks, tickers or coins (e.g. NVDA, Samsung, Dogecoin)",
     tabs: { all: "All", kr: "Korea", us: "US", coin: "Crypto" },
-    periods: { 60: "3M", 120: "6M", 250: "1Y" },
+    tfs: { d: "Daily", w: "Weekly", m: "Monthly", h: "6-Month", y: "Yearly" },
     redo: "Draw something else", save: "Save image", link: "Copy link",
     chars: "Pick a character",
     up: "GOING UP!!", down: "GOING DOWN!!", flat: "CRAWLING SIDEWAYS",
@@ -208,7 +216,9 @@ const T = {
     direct: (q) => `Load ${q} directly`, directSub: "A 6-digit Korean code or a US ticker not in the list", notFound: "No chart found for that code",
     loading: "Loading charts…", loadErr: "Couldn't load chart data. Please refresh.",
     future: "THE FUTURE (not drawn yet)", futureShort: "FUTURE",
-    asof: (d, live) => live ? `Daily · live · ${d}` : `Daily · last session ${d}`,
+    asof: (tfl, d, live) => live ? `${tfl} · live · ${d}` : `${tfl} · last ${d}`,
+    aiOn: "Turn AI art off", aiOff: "Turn AI art on", tooFew: "Too few candles at this size, showing daily instead", busy: "Loading chart…",
+    ai: { drawing: "AI is drawing a character that fits this chart… (5–10 s)", reused: (p) => `Reused an earlier drawing with a similar shape (${p}% alike)`, fresh: "AI drew a new one for this chart", limited: "Today's AI drawing limit is used up, showing the doodle only", fail: "Couldn't load the AI drawing, showing the doodle only" },
     disc1: "This is a doodle, for fun.", disc2: "Not investment advice, and there is no reason it should ever be right.",
     src: (d) => `Data: Korean and US stocks from Naver Finance, crypto from Binance (USDT). Stock data refreshes daily; current as of ${d}.`,
     copied: "Link copied", copyFail: "Copy the link from the address bar", saved: "Image saved",
@@ -243,7 +253,15 @@ const CHAR_IDS = ["cat", "camel", "whale", "shark", "dino", "snail", "rabbit", "
 let LANG = "ko";
 try { LANG = localStorage.getItem("cdo-lang") || ((navigator.language || "").toLowerCase().startsWith("ko") ? "ko" : "en"); } catch (e) {}
 let ITEMS = [], BYID = {}, ASOF = 0;
-let cur = null, period = 120, tab = "all", reroll = 0, forced = null, live = {};
+let cur = null, tf = "d", tab = "all", reroll = 0, forced = null;
+const TFS = ["d", "w", "m", "h", "y"];
+const TF_BASE = { d: "d", w: "w", m: "m", h: "m", y: "m" };
+const TF_SHOW = { d: 120, w: 104, m: 120, h: 60, y: 60 };
+const ART_API = LIVE_API ? LIVE_API.replace(/chart-doodle$/, "chart-doodle-art") : "";
+let AI_ON = true;
+try { AI_ON = localStorage.getItem("cdo-ai") !== "0"; } catch (e) {}
+const ai = { key: null, img: null, layer: null, dark: null, state: "", sim: 0 };
+let animating = false, currentFrame = null;
 let lastPick = null, lastRank = [], animId = 0;
 const $ = (id) => document.getElementById(id);
 const cv = $("cv"), ctx = cv.getContext("2d");
@@ -269,7 +287,7 @@ function name(it) { return LANG === "ko" ? it.ko : it.en; }
 function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 1800); }
 
 /* ---------- text + controls ---------- */
-function applyLang() {
+function applyLang(redraw = true) {
   const L = T[LANG];
   document.documentElement.lang = LANG;
   $("t-title").textContent = L.title; $("t-tag").textContent = L.tag;
@@ -292,13 +310,15 @@ function applyLang() {
     b.onclick = () => select(it); $("chips").appendChild(b);
   }
   $("periods").innerHTML = "";
-  for (const p of [60, 120, 250]) {
-    const b = document.createElement("button"); b.type = "button"; b.className = "per"; b.textContent = L.periods[p];
-    b.setAttribute("aria-pressed", period === p); b.onclick = () => { period = p; reroll = 0; applyLang(); draw(true); };
+  for (const f of TFS) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "per"; b.textContent = L.tfs[f];
+    b.setAttribute("aria-pressed", tf === f); b.onclick = () => { if (tf === f) return; tf = f; reroll = 0; applyLang(false); show(true); };
     $("periods").appendChild(b);
   }
+  $("b-ai").textContent = AI_ON ? L.aiOn : L.aiOff; $("b-ai").hidden = !ART_API;
+  setAi(ai.state, ai.sim);
   buildCharButtons();
-  if (cur) { header(); draw(false); }
+  if (cur && redraw) { header(); draw(false); }
 }
 function buildCharButtons() {
   const L = T[LANG]; const box = $("chars"); box.innerHTML = "";
@@ -362,44 +382,91 @@ $("q").addEventListener("keydown", (e) => {
 });
 
 async function select(it) {
+  $("results").hidden = true; $("q").value = "";
   if (!it.d) {
-    $("results").hidden = true;
-    await refreshLive(it);
-    if (!it.d) { toast(T[LANG].notFound); return; }
+    const ok = await ensureTf(it, "d");
+    if (!ok) { toast(T[LANG].notFound); return; }
+    it.d = it.tf.d;
     if (!BYID[it.id]) { ITEMS.push(it); BYID[it.id] = it; }
   }
   cur = it; reroll = 0; forced = null;
-  $("q").value = ""; $("results").hidden = true;
   try { history.replaceState(null, "", "#" + it.id); } catch (e) {}
-  header(); draw(true);
-  if (!live[it.id]) refreshLive(it);
   window.scrollTo({ top: $("card").offsetTop - 10, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  await show(true);
 }
-async function refreshLive(it) {
-  try {
-    let rows = null;
-    if (it.cat === "coin") {
-      const base = it.sym.replace("/USDT", "");
-      const r = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${base}USDT&interval=1d&limit=260`);
-      if (!r.ok) return;
-      const js = await r.json();
-      if (Array.isArray(js)) rows = js.map((k) => { const t = new Date(k[0]); const d = t.getUTCFullYear() * 10000 + (t.getUTCMonth() + 1) * 100 + t.getUTCDate(); return [d, +k[1], +k[2], +k[3], +k[4]]; });
-    } else if (LIVE_API) {
-      const r = await fetch(`${LIVE_API}?id=${encodeURIComponent(it.id)}`);
-      if (!r.ok) return;
-      const js = await r.json();
-      rows = js && js.d;
-      if (js && js.name && it.ko === it.sym) { it.ko = js.name; it.en = js.name; }
+
+/* candles: snapshot (daily) + live fetches per base timeframe (d/w/m); 6-month and yearly are built from monthly */
+function weekKey(d) {
+  const t = Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100);
+  return Math.floor(t / 864e5) - ((new Date(t).getUTCDay() + 6) % 7);
+}
+const KEYF = { w: weekKey, m: (d) => Math.floor(d / 100), h: (d) => Math.floor(d / 10000) * 10 + (Math.floor(d / 100) % 100 <= 6 ? 1 : 2), y: (d) => Math.floor(d / 10000) };
+function agg(rows, keyFn) {
+  const out = []; let k = null;
+  for (const r of rows) {
+    const kk = keyFn(r[0]);
+    if (kk !== k) { out.push([r[0], r[1], r[2], r[3], r[4]]); k = kk; }
+    else { const o = out[out.length - 1]; o[0] = r[0]; o[2] = Math.max(o[2], r[2]); o[3] = Math.min(o[3], r[3]); o[4] = r[4]; }
+  }
+  return out;
+}
+function rowsFor(it, f) {
+  const c = it.tf || {}, daily = c.d || it.d;
+  if (f === "d") return daily;
+  if (f === "w") return c.w || agg(daily, KEYF.w);
+  const monthly = c.m || agg(daily, KEYF.m);
+  return f === "m" ? monthly : agg(monthly, KEYF[f]);
+}
+const isLive = (it, f) => !!(it.tf && it.tf[TF_BASE[f]]);
+async function fetchTf(it, base) {
+  if (it.cat === "coin") {
+    const sym = it.sym.replace("/USDT", ""), iv = { d: "1d", w: "1w", m: "1M" }[base];
+    const r = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${sym}USDT&interval=${iv}&limit=260`);
+    if (!r.ok) return null;
+    const js = await r.json();
+    return Array.isArray(js) ? js.map((k) => { const t = new Date(k[0]); return [t.getUTCFullYear() * 10000 + (t.getUTCMonth() + 1) * 100 + t.getUTCDate(), +k[1], +k[2], +k[3], +k[4]]; }) : null;
+  }
+  if (!LIVE_API) return null;
+  const r = await fetch(`${LIVE_API}?id=${encodeURIComponent(it.id)}&tf=${base}`);
+  if (!r.ok) return null;
+  const js = await r.json();
+  if (js && js.name && it.ko === it.sym) { it.ko = js.name; it.en = js.name; }
+  return js && js.d;
+}
+const inflight = {};
+function ensureTf(it, base) {
+  it.tf = it.tf || {};
+  if (it.tf[base]) return Promise.resolve(true);
+  const k = it.id + ":" + base;
+  if (!inflight[k]) {
+    inflight[k] = fetchTf(it, base)
+      .then((rows) => { if (Array.isArray(rows) && rows.length >= (base === "d" ? 30 : 6)) { it.tf[base] = rows; return true; } return false; })
+      .catch(() => false)
+      .finally(() => { delete inflight[k]; });
+  }
+  return inflight[k];
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function show(animate) {
+  const it = cur, base = TF_BASE[tf];
+  if (!isLive(it, tf)) {
+    if (base === "d") {
+      header(); draw(animate);
+      if (await ensureTf(it, "d") && cur === it && TF_BASE[tf] === "d") { header(); draw(false); }
+      return;
     }
-    if (!Array.isArray(rows) || rows.length < 60) return;
-    it.d = rows;
-    live[it.id] = true;
-    if (cur === it) { header(); draw(false); }
-  } catch (e) { /* keep snapshot */ }
+    cv.classList.add("dim"); setStat(T[LANG].busy, true);
+    await Promise.race([ensureTf(it, base), sleep(6000)]);
+    cv.classList.remove("dim"); setStat("");
+    if (cur !== it || TF_BASE[tf] !== base) return;
+  }
+  if (rowsFor(it, tf).length < 6) { toast(T[LANG].tooFew); tf = "d"; applyLang(false); return show(animate); }
+  header(); draw(animate);
+  if (base !== "d") ensureTf(it, "d").then((ok) => { if (ok && cur === it) header(); });
 }
 
 function header() {
-  const it = cur, d = it.d, last = d[d.length - 1], prev = d[d.length - 2];
+  const it = cur, d = rowsFor(it, "d"), last = d[d.length - 1], prev = d[d.length - 2];
   $("nm").textContent = name(it);
   $("sb").textContent = `${it.sym} · ${T[LANG].cat[it.cat]} · ${LANG === "ko" ? it.en : it.ko}`;
   $("lp").textContent = fmtP(last[4], it.cur);
@@ -407,7 +474,8 @@ function header() {
   const up = ch >= 0;
   $("lc").textContent = `${up ? "+" : ""}${ch.toFixed(2)}%`;
   $("lc").style.color = css(up ? `--up-${LANG}` : `--down-${LANG}`);
-  $("asof").textContent = T[LANG].asof(fmtDate(last[0]), !!live[it.id]);
+  const tr = rowsFor(it, tf);
+  $("asof").textContent = T[LANG].asof(T[LANG].tfs[tf], fmtDate(tr[tr.length - 1][0]), isLive(it, tf));
 }
 
 /* ---------- geometry ---------- */
@@ -441,15 +509,15 @@ function makePen(rng, s) {
   const items = [];
   return {
     items,
-    line(P, o = {}) { if (P.length > 1) items.push({ k: "l", P, w: (o.w || 3.2) * s, dash: o.dash || null }); },
+    line(P, o = {}) { if (P.length > 1) items.push({ k: "l", P, w: (o.w || 3.2) * s, dash: o.dash || null, main: !!o.main }); },
     curve(P, o) { this.line(catmull(P), o); },
     ell(cx, cy, rx, ry, o, a0, a1) { this.line(ellipsePts(cx, cy, rx, ry, rng, a0, a1), o); },
     dot(x, y, r = 3) { items.push({ k: "d", x, y, r: r * s }); },
-    arrowHead(from, to, size) {
+    arrowHead(from, to, size, main = false) {
       const a = Math.atan2(to.y - from.y, to.x - from.x), L = size * s;
-      this.line([{ x: to.x - L * Math.cos(a - 0.5), y: to.y - L * Math.sin(a - 0.5) }, to, { x: to.x - L * Math.cos(a + 0.5), y: to.y - L * Math.sin(a + 0.5) }], { w: 3.6 });
+      this.line([{ x: to.x - L * Math.cos(a - 0.5), y: to.y - L * Math.sin(a - 0.5) }, to, { x: to.x - L * Math.cos(a + 0.5), y: to.y - L * Math.sin(a + 0.5) }], { w: 3.6, main });
     },
-    text(x, y, str, o = {}) { items.push({ k: "t", x, y, str, size: (o.size || 19) * s, rot: o.rot ?? (rng() - 0.5) * 0.12, align: o.align || "center", hl: !!o.hl }); },
+    text(x, y, str, o = {}) { items.push({ k: "t", x, y, str, size: (o.size || 19) * s, rot: o.rot ?? (rng() - 0.5) * 0.12, align: o.align || "center", hl: !!o.hl, main: !!o.main }); },
     pointer(x, y, tx, ty, str) { // label with a scribbly arrow to (tx,ty)
       this.text(x, y, str);
       const fx = x + (tx - x) * 0.18, fy = y + (ty - y) * 0.18 + 6 * s;
@@ -519,7 +587,7 @@ const CHARS = {
       const path = fallen
         ? [L, { x: A.fx0 + 0.2 * A.fw, y: (L.y + ay) / 2 + 0.2 * U }, apex, { x: A.fx0 + 0.62 * A.fw, y: A.cy(ay + 1.3 * U) }]
         : [L, { x: A.fx0 + 0.18 * A.fw, y: A.cy(L.y + 0.9 * U) }, apex, { x: A.fx0 + 0.62 * A.fw, y: A.cy(ay + 1.3 * U) }];
-      pen.curve(path, { w: 4 });
+      pen.curve(path, { w: 4, main: true });
       const faceTop = Math.max(e1.y, ay) + 0.9 * U;
       let r = Math.max((ax - e1.x) * 0.62, 1.4 * U);
       let cx = (e1.x + ax) / 2, cyy = faceTop + r * 0.75;
@@ -544,7 +612,7 @@ const CHARS = {
       if (hs.length >= 2) {
         const h1 = A.pts[hs.at(-2).i], h2 = A.pts[hs.at(-1).i];
         const neckB = A.F(0.42, -1.8), head = A.F(0.72, -0.7);
-        pen.curve([L, A.F(0.2, -0.8), neckB, A.F(0.6, -1.4), head], { w: 4 });
+        pen.curve([L, A.F(0.2, -0.8), neckB, A.F(0.6, -1.4), head], { w: 4, main: true });
         pen.ell(head.x + 0.55 * U, head.y - 0.15 * U, 0.75 * U, 0.42 * U, { w: 3 });
         pen.dot(head.x + 0.6 * U, head.y - 0.3 * U, 3.4);
         pen.line([{ x: head.x + 0.1 * U, y: head.y - 0.45 * U }, { x: head.x + 0.2 * U, y: head.y - 0.85 * U }, { x: head.x + 0.35 * U, y: head.y - 0.5 * U }], { w: 2.4 });
@@ -556,7 +624,7 @@ const CHARS = {
         const h1 = A.pts[hi];
         const apex = { x: A.fx0 + 0.4 * A.fw, y: A.cy(Math.min(h1.y, L.y - 1.0 * U)) };
         const head = A.F(0.82, 0.2);
-        pen.curve([L, { x: A.fx0 + 0.12 * A.fw, y: A.cy(L.y + 0.35 * U) }, apex, { x: A.fx0 + 0.66 * A.fw, y: A.cy(L.y + 0.3 * U) }, head], { w: 4 });
+        pen.curve([L, { x: A.fx0 + 0.12 * A.fw, y: A.cy(L.y + 0.35 * U) }, apex, { x: A.fx0 + 0.66 * A.fw, y: A.cy(L.y + 0.3 * U) }, head], { w: 4, main: true });
         pen.ell(head.x + 0.45 * U, head.y - 0.1 * U, 0.6 * U, 0.38 * U, { w: 3 });
         pen.dot(head.x + 0.55 * U, head.y - 0.22 * U, 3.4);
         target = apex; reason = "camel1"; humps = [[h1, lb.hump1], [apex, lb.hump2s]];
@@ -590,7 +658,7 @@ const CHARS = {
       for (const dx of [-0.7, 0, 0.7]) pen.curve([{ x: top.x, y: top.y - 0.2 * U }, { x: top.x + dx * 0.5 * U, y: top.y - 1.1 * U }, { x: top.x + dx * 1.1 * U, y: top.y - 1.5 * U }], { w: 2.4 });
       pen.dot(top.x - 0.9 * U, top.y - 1.2 * U, 2.6); pen.dot(top.x + 1.0 * U, top.y - 1.1 * U, 2.6);
       const tip = A.F(0.36, 1.9);
-      pen.curve([{ x: L.x, y: Math.min(L.y + 0.8 * U, bellyY) }, A.F(0.18, 0.4), tip], { w: 4 });
+      pen.curve([{ x: L.x, y: Math.min(L.y + 0.8 * U, bellyY) }, A.F(0.18, 0.4), tip], { w: 4, main: true });
       pen.curve([L, A.F(0.14, 0.9), { x: tip.x - 0.1 * U, y: tip.y + 0.2 * U }], { w: 3 });
       pen.curve([tip, { x: tip.x - 0.4 * U, y: tip.y - 0.9 * U }, { x: tip.x - 1.0 * U, y: tip.y - 1.0 * U }], { w: 3.4 });
       pen.curve([tip, { x: tip.x + 0.4 * U, y: tip.y - 0.9 * U }, { x: tip.x + 1.1 * U, y: tip.y - 0.9 * U }], { w: 3.4 });
@@ -609,7 +677,7 @@ const CHARS = {
       const baseY = Math.max(base.y, L.y + 0.8 * U);
       pen.line(A.pts.slice(li), { w: 4 });
       const end = { x: A.fx0 + 0.34 * A.fw, y: A.cy(baseY) };
-      pen.curve([L, { x: A.fx0 + 0.06 * A.fw, y: L.y - 0.15 * U }, { x: A.fx0 + 0.2 * A.fw, y: L.y + 0.5 * (baseY - L.y) }, end], { w: 4 });
+      pen.curve([L, { x: A.fx0 + 0.06 * A.fw, y: L.y - 0.15 * U }, { x: A.fx0 + 0.2 * A.fw, y: L.y + 0.5 * (baseY - L.y) }, end], { w: 4, main: true });
       for (const [dy, a, b] of [[0, base.x - 2.2 * U, A.fx0 + 0.6 * A.fw], [0.75 * U, base.x - 1.2 * U, A.fx0 + 0.45 * A.fw]]) {
         const P = []; const wy = Math.min(baseY + dy, A.box.bottom - 6);
         for (let x = a; x <= b; x += 4) P.push({ x, y: wy + Math.sin((x - a) / (0.45 * U)) * 0.18 * U });
@@ -625,7 +693,7 @@ const CHARS = {
     build(A, pen, lb) {
       const U = A.U, L = A.L;
       const neckTop = A.F(0.42, 2.5);
-      pen.curve([L, A.F(0.22, 1.3), neckTop], { w: 4 });
+      pen.curve([L, A.F(0.22, 1.3), neckTop], { w: 4, main: true });
       const hc = { x: neckTop.x + 0.75 * U, y: neckTop.y - 0.2 * U };
       pen.ell(hc.x, hc.y, 1.0 * U, 0.55 * U, { w: 3.4 });
       pen.dot(hc.x + 0.2 * U, hc.y - 0.15 * U, 3.8);
@@ -653,7 +721,7 @@ const CHARS = {
       pen.curve([{ x: c.x - 1.6 * U, y: L.y + 0.1 * U }, { x: c.x, y: L.y + 0.25 * U }, { x: L.x + 0.3 * U, y: L.y + 0.1 * U }, { x: L.x + 0.5 * U, y: L.y - 0.4 * U }], { w: 3.2 });
       for (const dx of [0.35, 0.75]) { const tip = { x: L.x + dx * U, y: L.y - 1.2 * U }; pen.line([{ x: L.x + 0.4 * U, y: L.y - 0.3 * U }, tip], { w: 2.4 }); pen.dot(tip.x, tip.y, 3.6); }
       const end = A.F(0.9, 0.08);
-      pen.curve([L, A.F(0.3, -0.12), A.F(0.6, 0.12), end], { w: 3, dash: [7, 7] });
+      pen.curve([L, A.F(0.3, -0.12), A.F(0.6, 0.12), end], { w: 3, dash: [7, 7], main: true });
       pen.text(A.fx0 + 0.5 * A.fw, A.cy(L.y + 1.2 * U), lb.slime);
       return { target: end, reason: "snail" };
     },
@@ -663,7 +731,7 @@ const CHARS = {
     build(A, pen, lb) {
       const U = A.U, L = A.L;
       const e1 = A.F(0.2, 2.6), e2 = A.F(0.38, 2.9);
-      pen.curve([L, A.F(0.1, 0.35), e1, A.F(0.28, 0.45), e2, A.F(0.48, 0.4)], { w: 4 });
+      pen.curve([L, A.F(0.1, 0.35), e1, A.F(0.28, 0.45), e2, A.F(0.48, 0.4)], { w: 4, main: true });
       const fc = { x: A.fx0 + 0.3 * A.fw, y: A.cy(L.y + 0.75 * U) }, r = Math.min(1.1 * U, A.fw * 0.2);
       pen.ell(fc.x, fc.y, r * 1.15, r, { w: 3.4 });
       pen.dot(fc.x - r * 0.4, fc.y - r * 0.15, 4); pen.dot(fc.x + r * 0.4, fc.y - r * 0.15, 4);
@@ -679,7 +747,7 @@ const CHARS = {
       const U = A.U, L = A.L;
       const d = A.pts[0].y > L.y ? 1 : -1;
       const pts = [L, A.F(0.18, 0.8 + 0.25 * d), A.F(0.36, -0.5 + 0.6 * d), A.F(0.54, 0.7 + 0.9 * d), A.F(0.7, -0.2 + 1.3 * d)];
-      pen.curve(pts, { w: 4 });
+      pen.curve(pts, { w: 4, main: true });
       const h = pts.at(-1);
       pen.ell(h.x + 0.5 * U, h.y, 0.65 * U, 0.4 * U, { w: 3.4 });
       pen.dot(h.x + 0.6 * U, h.y - 0.12 * U, 3.4);
@@ -707,7 +775,7 @@ const CHARS = {
       pen.ell(top.x + 0.5 * U, top.y + 1.0 * U, 0.2 * U, 0.3 * U, { w: 3.6 });
       pen.ell(top.x, top.y + 1.9 * U, 0.28 * U, 0.36 * U, { w: 3 });
       const end = A.F(0.85, -3.0);
-      pen.curve([L, A.F(0.25, -0.8), A.F(0.55, -2.1), end], { w: 4, dash: [10, 7] });
+      pen.curve([L, A.F(0.25, -0.8), A.F(0.55, -2.1), end], { w: 4, dash: [10, 7], main: true });
       pen.pointer(top.x + 2.4 * U, top.y - 1.2 * U, top.x + 0.3 * U, top.y - 0.2 * U, lb.ghostHead);
       pen.text(A.fx0 + 0.6 * A.fw, A.cy(L.y - 0.6 * U), lb.poof);
       return { target: end, reason: "ghost" };
@@ -735,7 +803,7 @@ function drawBase(c, A, L) {
   for (let t = 0; t <= ticks; t++) {
     const yy = box.top + (box.bottom - box.top) * (t / ticks);
     c.beginPath(); c.moveTo(box.left, Math.round(yy) + 0.5); c.lineTo(box.right, Math.round(yy) + 0.5); c.stroke();
-    c.fillText(fmtAxis(A.y2p(yy)), box.right + 6, yy);
+    const pv = A.y2p(yy); if (pv >= 0) c.fillText(fmtAxis(pv), box.right + 6, yy);
   }
   c.setLineDash([4, 5]); c.beginPath(); c.moveTo(Math.round(A.fx0) + 0.5, box.top - 8); c.lineTo(Math.round(A.fx0) + 0.5, box.bottom + 8); c.stroke(); c.setLineDash([]);
   c.textBaseline = "top"; c.textAlign = "center";
@@ -782,10 +850,11 @@ function prepStrokes(items, rng, s) {
   }
   return { strokes: out, total };
 }
-function paintStrokes(c, prep, upto, ink, hl) {
+function paintStrokes(c, prep, upto, ink, hl, mainOnly) {
   c.lineCap = "round"; c.lineJoin = "round";
   for (const st of prep.strokes) {
     if (st.start > upto) break;
+    if (mainOnly && !st.main) continue;
     const local = upto - st.start;
     if (st.k === "l") {
       c.strokeStyle = ink; c.setLineDash(st.dash || []);
@@ -816,11 +885,11 @@ function draw(animate) {
   cancelAnimationFrame(animId);
   const L = T[LANG];
   const { w, h, dpr, s } = sizeCanvas();
-  const rows = cur.d.slice(-period);
+  const rows = rowsFor(cur, tf).slice(-TF_SHOW[tf]);
   const box = { W: w, H: h, s, left: 8, right: w - 64 * clamp(s, 0.8, 1), top: 20, bottom: h - 30 };
   box.histW = (box.right - box.left) * (w < 560 ? 0.62 : 0.68);
   const A = analyze(rows, box);
-  const seed = hash(cur.id + ":" + period + ":" + rows[rows.length - 1][0]);
+  const seed = hash(cur.id + ":" + tf + ":" + rows[rows.length - 1][0]);
   lastRank = rank(A, seed);
   const pick = forced || lastRank[reroll % lastRank.length];
   lastPick = pick;
@@ -828,7 +897,7 @@ function draw(animate) {
   const pen = makePen(rng, s);
   const res = CHARS[pick].build(A, pen, L.lb);
   const lastClose = rows[rows.length - 1][4];
-  const tp = A.y2p(res.target.y);
+  const tp = Math.max(A.y2p(res.target.y), rows[rows.length - 1][4] * 0.03);
   const dir = Math.abs(res.target.y - A.L.y) < 0.25 * A.U ? 0 : res.target.y < A.L.y ? 1 : -1;
   const pct = (tp / lastClose - 1) * 100;
   const confs = [420, 1000, 9999, 777, 101, 3000, 6974];
@@ -836,9 +905,9 @@ function draw(animate) {
   // big verdict on the canvas, plus the arrow at the target
   const vt = dir > 0 ? L.up : dir < 0 ? L.down : L.flat;
   const prev = pen.items.length;
-  pen.arrowHead({ x: res.target.x - 10 * s, y: res.target.y + dir * 10 * s }, res.target, 16);
+  pen.arrowHead({ x: res.target.x - 10 * s, y: res.target.y + dir * 10 * s }, res.target, 16, true);
   const vy = res.target.y < (box.top + box.bottom) / 2 ? box.bottom - 22 * s : box.top + 14 * s;
-  pen.text((A.fx0 + box.right) / 2, vy, vt, { size: w < 560 ? 24 : 32, rot: -0.06, hl: true });
+  pen.text((A.fx0 + box.right) / 2, vy, vt, { size: w < 560 ? 24 : 32, rot: -0.06, hl: true, main: true });
   void prev;
   layout = { A, box, dpr };
   // cache base
@@ -846,20 +915,109 @@ function draw(animate) {
   const bc = base.getContext("2d"); bc.setTransform(dpr, 0, 0, dpr, 0, 0); drawBase(bc, A, L);
   const prep = prepStrokes(pen.items, rngOf(seed + 7), s);
   const ink = css("--ink"), hl = css("--hl");
+  // AI art: same chart + character + candle set -> same request key
+  const mainItem = pen.items.find((i) => i.k === "l" && i.main);
+  const path = mainItem ? mainItem.P : [A.L];
+  const key = `${cur.id}|${tf}|${pick}|${rows[rows.length - 1][0]}|${rows.length}`;
+  if (ai.key !== key) {
+    ai.key = key; ai.img = null; ai.layer = null;
+    if (AI_ON && ART_API) requestArt(key, shapeSig(A, box, path), () => lineImage(A, box, path), pick, dir);
+    else setAi("");
+  }
   const frame = (upto) => {
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(base, 0, 0);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); paintStrokes(ctx, prep, upto, ink, hl);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const lay = AI_ON && ai.key === key ? aiLayer() : null;
+    if (lay) { ctx.globalAlpha = 0.95; ctx.drawImage(lay, box.left, box.top, box.right - box.left, box.bottom - box.top); ctx.globalAlpha = 1; }
+    paintStrokes(ctx, prep, upto, ink, hl, !!lay);
   };
+  currentFrame = frame;
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (!animate || reduce) frame(Infinity);
+  if (!animate || reduce) { animating = false; frame(Infinity); }
   else {
+    animating = true;
     const t0 = performance.now(), dur = clamp(prep.total * 1.1, 1400, 2600);
-    const step = (t) => { const k = Math.min(1, (t - t0) / dur); frame(prep.total * (1 - Math.pow(1 - k, 1.6))); if (k < 1) animId = requestAnimationFrame(step); };
+    const step = (t) => { const k = Math.min(1, (t - t0) / dur); frame(prep.total * (1 - Math.pow(1 - k, 1.6))); if (k < 1) animId = requestAnimationFrame(step); else animating = false; };
     animId = requestAnimationFrame(step);
   }
   verdictPanel();
   buildCharButtons();
 }
+/* ---------- AI art ---------- */
+function setStat(text, busy = false) { const el = $("aistat"); el.textContent = text; el.classList.toggle("busy", busy); }
+function setAi(state, sim = 0) {
+  ai.state = state; ai.sim = sim;
+  const A = T[LANG].ai;
+  if (!state) return setStat("");
+  setStat(state === "reused" ? A.reused(Math.round(sim * 100)) : A[state], state === "drawing");
+}
+function shapeSig(A, box, path) {
+  const P = A.pts.concat(path.slice(1)), W = box.right - box.left, H = box.bottom - box.top;
+  const xs = P.map((p) => (p.x - box.left) / W), ys = P.map((p) => (p.y - box.top) / H);
+  const out = []; let j = 0;
+  for (let i = 0; i < 48; i++) {
+    const x = (i + 0.5) / 48;
+    while (j < xs.length - 2 && xs[j + 1] < x) j++;
+    let y;
+    if (x <= xs[0]) y = ys[0];
+    else { const t = (x - xs[j]) / ((xs[j + 1] - xs[j]) || 1); y = ys[j] + (ys[j + 1] - ys[j]) * clamp(t, 0, 1); }
+    out.push(+clamp(y, -0.5, 1.5).toFixed(4));
+  }
+  return out;
+}
+function lineImage(A, box, path) {
+  const c = document.createElement("canvas"); c.width = 1024; c.height = 768;
+  const g = c.getContext("2d"), sx = 1024 / (box.right - box.left), sy = 768 / (box.bottom - box.top);
+  g.fillStyle = "#fff"; g.fillRect(0, 0, 1024, 768);
+  g.strokeStyle = "#000"; g.lineWidth = 8; g.lineJoin = "round"; g.lineCap = "round"; g.beginPath();
+  A.pts.concat(path.slice(1)).forEach((p, i) => { const x = (p.x - box.left) * sx, y = (p.y - box.top) * sy; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.stroke();
+  return c.toDataURL("image/png");
+}
+const isDark = () => document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+function aiLayer() {
+  if (!ai.img) return null;
+  const dark = isDark();
+  if (ai.layer && ai.dark === dark) return ai.layer;
+  const img = ai.img, W = Math.min(img.naturalWidth, 1024), H = Math.round(img.naturalHeight * W / img.naturalWidth);
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d"); g.drawImage(img, 0, 0, W, H);
+  try {
+    const d = g.getImageData(0, 0, W, H), p = d.data;
+    for (let i = 0; i < p.length; i += 4) {
+      const r = p[i], gg = p[i + 1], b = p[i + 2], mn = Math.min(r, gg, b), mx = Math.max(r, gg, b);
+      p[i + 3] = Math.round(clamp((246 - mn) / 50, 0, 1) * 255); // white paper -> transparent
+      if (dark && mx - mn < 40) { const v = Math.max(255 - (r + gg + b) / 3, 175); p[i] = p[i + 1] = p[i + 2] = v; } // black ink -> light ink
+    }
+    g.putImageData(d, 0, 0);
+  } catch (e) { return null; }
+  ai.layer = c; ai.dark = dark;
+  return c;
+}
+function loadImg(url) {
+  return new Promise((res, rej) => { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => res(im); im.onerror = rej; im.src = url; });
+}
+async function requestArt(key, sig, lineFn, pick, dir) {
+  setAi("drawing");
+  const post = (body) => fetch(ART_API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    let r = await post({ char: pick, dir, sig, reuseOnly: true });
+    let js = await r.json().catch(() => ({}));
+    if (ai.key !== key) return;
+    if (!js.url) {
+      r = await post({ char: pick, dir, sig, line: lineFn() });
+      js = await r.json().catch(() => ({}));
+      if (ai.key !== key) return;
+      if (!r.ok || !js.url) { setAi(js.limited ? "limited" : "fail"); return; }
+    }
+    const im = await loadImg(js.url);
+    if (ai.key !== key) return;
+    ai.img = im; ai.layer = null;
+    setAi(js.reused ? "reused" : "fresh", js.similarity || 0);
+    if (!animating && currentFrame) currentFrame(Infinity);
+  } catch (e) { if (ai.key === key) setAi("fail"); }
+}
+
 function verdictPanel() {
   const L = T[LANG], r = result;
   const col = r.dir > 0 ? css(`--up-${LANG}`) : r.dir < 0 ? css(`--down-${LANG}`) : css("--fg");
@@ -875,6 +1033,11 @@ $("b-redo").onclick = () => {
   if (lastRank[reroll % lastRank.length] === lastPick) reroll++;
   draw(true);
 };
+$("b-ai").onclick = () => {
+  AI_ON = !AI_ON; try { localStorage.setItem("cdo-ai", AI_ON ? "1" : "0"); } catch (e) {}
+  ai.key = null; $("b-ai").textContent = AI_ON ? T[LANG].aiOn : T[LANG].aiOff;
+  draw(false);
+};
 $("b-link").onclick = async () => {
   const url = location.href.split("#")[0] + "#" + cur.id;
   try { await navigator.clipboard.writeText(url); toast(T[LANG].copied); } catch (e) { toast(T[LANG].copyFail); }
@@ -887,7 +1050,8 @@ $("b-save").onclick = () => {
   c.fillStyle = css("--fg"); c.font = `700 ${22 * dpr}px ${css("--font-ui")}`; c.textBaseline = "top";
   c.fillText(`${name(cur)}  ${cur.sym}`, pad, pad);
   c.fillStyle = css("--muted"); c.font = `500 ${13 * dpr}px ${css("--font-num")}`;
-  c.fillText(`${fmtP(cur.d.at(-1)[4], cur.cur)} · ${fmtDate(cur.d.at(-1)[0])} · ${L.periods[period]}`, pad, pad + 30 * dpr);
+  const dr = rowsFor(cur, "d");
+  c.fillText(`${fmtP(dr.at(-1)[4], cur.cur)} · ${fmtDate(dr.at(-1)[0])} · ${L.tfs[tf]}`, pad, pad + 30 * dpr);
   c.drawImage(cv, pad, headH);
   const y0 = headH + cv.height + 10 * dpr;
   c.fillStyle = r.dir > 0 ? css(`--up-${LANG}`) : r.dir < 0 ? css(`--down-${LANG}`) : css("--fg");
@@ -926,9 +1090,8 @@ Promise.all([
   applyLang();
   const h = location.hash.slice(1), fromHash = BYID[h];
   cur = fromHash || BYID[LANG === "ko" ? "kr-005930" : "c-BTC"] || ITEMS[0];
-  header(); draw(true);
-  refreshLive(cur);
   if (!fromHash && directItem(h)) select(directItem(h));
+  else show(true);
 }).catch(() => { $("loading").textContent = T[LANG].loadErr; });
 })();
 </script>
