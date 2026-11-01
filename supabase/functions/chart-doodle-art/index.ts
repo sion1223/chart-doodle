@@ -25,17 +25,14 @@ const GLOBAL_LIMIT = +(Deno.env.get("DOODLE_GLOBAL_DAILY_LIMIT") ?? 150);
 // Reuse when the root-mean-square gap between shapes is under this (fraction of chart height).
 const MATCH_RMS = +(Deno.env.get("DOODLE_MATCH_RMS") ?? 0.09);
 
-const SUBJECT: Record<string, [string, string]> = {
-  cat: ["a cat", "the two highest bumps of the curve are the cat's two pointy ears and the cat's round face hangs right below and between them"],
-  camel: ["a camel", "the two big bumps of the curve are the camel's humps; give it legs below and a head and neck at the right end"],
-  whale: ["a whale", "the long curve is the whale's back, with its belly below it, and the line rising at the right end is its tail with flukes"],
-  shark: ["a shark", "the sharp peak is the shark's dorsal fin sticking out of the water, with waves along its base"],
-  dino: ["a long-necked dinosaur", "the line rising at the right end is the dinosaur's long neck with its head at the top; its big body sits below the middle of the curve"],
-  snail: ["a snail", "the flat right part of the curve is the ground the snail crawls on, with its spiral shell sitting on the curve"],
-  rabbit: ["a rabbit", "the two tall spikes on the right are the rabbit's two long ears and its face is right below them"],
-  snake: ["a snake", "the whole wiggly curve is the snake's body and its head with a forked tongue is at the right end"],
-  ghost: ["a ghost", "the peak of the curve is the round top of the ghost's head, with a wavy bottom, and the line falling to the right is the ghost fading away"],
-};
+// Character list shared with the page (keep this copy identical to /characters.json in the repo root).
+import CHARS from "./characters.json" with { type: "json" };
+const SUBJECT: Record<string, [string, string]> = {};
+for (const [id, c] of Object.entries(CHARS.custom as Record<string, { subject: string; layout: string }>)) SUBJECT[id] = [c.subject, c.layout];
+for (const g of CHARS.generic as Array<{ id: string; subject: string; arche: string; pe: string; qe: string }>) {
+  const layout = (CHARS.archetypes as Record<string, { layout: string }>)[g.arche].layout.replace("{part}", g.pe).replace("{past}", g.qe);
+  SUBJECT[g.id] = [g.subject, layout];
+}
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });

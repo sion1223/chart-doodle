@@ -12,7 +12,8 @@ Pick a stock or coin and the site scribbles a character on the chart, then "pred
 
 - 국내주식·미국주식·지수·코인 86종 검색 (한글명, 영문명, 티커)
 - 한국어 / English 전환. 한국어 모드는 상승 빨강·하락 파랑, 영어 모드는 상승 초록·하락 빨강
-- 캐릭터 9종: 고양이, 낙타, 고래, 상어, 목 긴 공룡, 달팽이, 토끼, 뱀, 유령. 차트 모양(고점, 추세, 횡보 등)에 맞는 캐릭터를 자동으로 고르고, 직접 고를 수도 있음
+- 캐릭터 107종: 직접 그린 9종(고양이, 낙타, 고래, 상어, 목 긴 공룡, 달팽이, 토끼, 뱀, 유령) + `characters.json`에 정의된 98종. 차트 모양(고점, 추세, 횡보 등)에 맞는 캐릭터를 자동으로 고르고, 목록에서 직접 고를 수도 있음
+- 캐릭터 추가: `characters.json`의 `generic`에 한 줄 추가 (`arche`는 미래 경로 모양: rise, curl, hump, spikes, dipup, vee, drop, bumpdrop, crash, flat, zigup, zigdown). 같은 파일을 `supabase/functions/chart-doodle-art/characters.json`에도 복사한 뒤 함수를 재배포
 - 일봉 / 주봉 / 월봉 / 6개월봉 / 1년봉, 이미지 저장, 링크 공유(`#us-TSLA` 같은 해시)
 - **AI 그림**: 차트 선과 예측 경로를 이미지 모델에 보내 그 선을 외곽선으로 삼은 캐릭터 그림을 받아 차트 위에 겹침. 생성한 그림은 모양 벡터와 함께 저장해 두고, 비슷한 모양의 차트가 오면 새로 만들지 않고 재사용
 
